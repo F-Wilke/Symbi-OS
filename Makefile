@@ -276,6 +276,32 @@ l_all: docker_prepare_linux_build l_mrproper l_config l_build l_ins l_cp l_initr
 l_cp_vmlinux:
 	docker cp $(CONT):$(LINUX_PATH)/vmlinux .
 
+# Build a kernel module inside container
+
+MODULE_SRC ?= ./libkallsyms/babel
+MODULE_DEST ?= $(HOME)/babel_build
+MODULE_NAME ?= babel
+MODULE_LOCAL_DEST ?= ./built_modules
+KERNEL_BUILD_PATH ?= $(LINUX_PATH)
+
+
+copy_module_src:
+	sudo docker cp $(MODULE_SRC) $(CONT):$(MODULE_DEST)
+
+build_module_in_container:
+	$(RUN_IN_CONT) sh -c 'mkdir -p $(MODULE_DEST) && cd $(MODULE_DEST) && make -C $(KERNEL_BUILD_PATH) M=$(MODULE_DEST) modules'
+
+copy_module_back:
+	mkdir -p $(MODULE_LOCAL_DEST)
+	sudo docker cp $(CONT):$(MODULE_DEST)/$(MODULE_NAME).ko $(MODULE_LOCAL_DEST)
+
+build_module_full: FEDORA_RELEASE=35
+build_module_full: copy_module_src build_module_in_container copy_module_back
+
+
+
+
+
 # ====================================================
 # Grubby
 # ====================================================
