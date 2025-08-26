@@ -1,24 +1,23 @@
 getting addresses
 got all addresses
 staring main
-greeter.ko blob loaded at 0x405078, size: 143088 bytes
+greeter.ko blob loaded at 0x405078, size: 97464 bytes
 First 8 bytes: 7f 45 4c 46 02 01 01 00 
 called elevate
-[copy_module_from_user] umod=0x405078 len=143088 info=0xffffc900001e9000
-[copy_module_from_user] Allocated info->hdr=0xffffc9000184d000 (len=143088)
-[copy_chunked_from_user] dst=0xffffc9000184d000 usrc=0x405078 len=143088
-[copy_chunked_from_user] Copying chunk: n=65536, dst=0xffffc9000184d000, usrc=0x405078, remaining len=143088
-[copy_chunked_from_user] Copying chunk: n=65536, dst=0xffffc9000185d000, usrc=0x415078, remaining len=77552
-[copy_chunked_from_user] Copying chunk: n=12016, dst=0xffffc9000186d000, usrc=0x425078, remaining len=12016
-[copy_chunked_from_user] Successfully copied 143088 bytes from 0x405078 to 0xffffc9000184d000
+[copy_module_from_user] umod=0x405078 len=97464 info=0xffffc9000018f000
+[copy_module_from_user] Allocated info->hdr=0xffffc900013c9000 (len=97464)
+[copy_chunked_from_user] dst=0xffffc900013c9000 usrc=0x405078 len=97464
+[copy_chunked_from_user] Copying chunk: n=65536, dst=0xffffc900013c9000, usrc=0x405078, remaining len=97464
+[copy_chunked_from_user] Copying chunk: n=31928, dst=0xffffc900013d9000, usrc=0x415078, remaining len=31928
+[copy_chunked_from_user] Successfully copied 97464 bytes from 0x405078 to 0xffffc900013c9000
 [copy_module_from_user] Returning err=0
 starting load_module
-uargs: 0x4035a6, info: 0xffffc900001e9000
+uargs: 0x4035a6, info: 0xffffc9000018f000
 load_info {
   name: (null)
   mod: (nil)
-  hdr: 0xffffc9000184d000
-  len: 143088
+  hdr: 0xffffc900013c9000
+  len: 97464
   sechdrs: (nil)
   secstrings: (null)
   strtab: (null)

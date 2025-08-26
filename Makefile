@@ -77,16 +77,17 @@ master_clean:
 5.14.0-kElevate: LINUX_BUILD=--branch 5.14-config --single-branch --depth 1 
 5.14.0-kElevate: KERN_VER=$(KERN_REL)$(KERN_EXTRAVERSION)
 5.14.0-kElevate: CONFIG=$(HOME)/linuxConfigs/5.14/USE_ME/symbiote_config
+5.14.0-kElevate: LOCAL_LINUX_PATH=./linux
 
 # 5.14.0-kElevate: master
 # 5.14.0-kElevate: docker_prepare_linux_build
 # 5.14.0-kElevate: l_ins l_cp l_initrd
 # 5.14.0-kElevate: l_build l_ins l_cp l_initrd
-# 5.14.0-kElevate: l_cp l_initrd grubby_add_kern enable_sudo_pw_checking 
-# 5.14.0-kElevate: grubby_set_kele_default_and_reboot
+# 5.14.0-kElevate: grubby_add_kern enable_sudo_pw_checking 
+5.14.0-kElevate: grubby_set_kele_default_and_reboot
 # 5.14.0-kElevate: l_cp_vmlinux
 # 5.14.0-kElevate: l_make_cscope
-5.14.0-kElevate: l_make_cflow
+# 5.14.0-kElevate: l_make_cflow
 
 
 # Note, I think the + is appended to the kernel if 1) there are uncomitted changes in the 

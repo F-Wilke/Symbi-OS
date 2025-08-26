@@ -102,6 +102,9 @@ int greet_from_blob() {
         
     sym_elevate();
     PRINTF("called elevate\n");
+    // struct load_info __info = {0};
+    // struct load_info* info = &__info;
+
     struct load_info* info = __vmalloc(sizeof(struct load_info), GFP_KERNEL);
     if (!info) {
         PRINTF("Failed to allocate memory for load_info\n");
