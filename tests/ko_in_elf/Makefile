@@ -19,6 +19,9 @@ greeter.o: greeter.ko
 basic: greeter.o
 	$(PATCH_DEFINES) gcc main.c greeter.o -Wl,-T,default.ld -o mymodloader -L../../Symlib/dynam_build -lSym -I ../../Symlib/include $(CFLAGS)
 
+mymodloader.so: greeter.o
+	$(PATCH_DEFINES) gcc -shared -fPIC main.c greeter.o -o mymodloader.so -L../../Symlib/dynam_build -lSym -I ../../Symlib/include $(CFLAGS)
+
 clean:
-	rm -f mymodloader greeter.o greeter.ko 
+	rm -f mymodloader greeter.o greeter.ko mymodloader.so
 	$(MAKE) -C ../.. clean_module MODULE_SRC=./linux-kernel-module/greeter MODULE_DEST=/root/greeter MODULE_NAME=greeter
