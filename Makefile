@@ -50,14 +50,21 @@ master_clean:
 6.3.0: master
 
 # Not yet implemented in the kernel
-6.3.0-kElevate: FEDORA_RELEASE=38
-6.3.0-kElevate: KERN_REL=6.3.0
-6.3.0-kElevate: KERN_EXTRAVERSION=-kElevate
-6.3.0-kElevate: LINUX_BUILD=--branch 6.3 --single-branch --depth 1
-6.3.0-kElevate: KERN_VER=$(KERN_REL)$(KERN_EXTRAVERSION)+
-6.3.0-kElevate: CONFIG=$(HOME)/linuxConfigs/5.14/USE_ME/symbiote_config
+6.16.0-kElevate: FEDORA_RELEASE=43
+6.16.0-kElevate: KERN_REL=6.16.0
+6.16.0-kElevate: KERN_EXTRAVERSION=-kElevate
+6.16.0-kElevate: LINUX_BUILD=--branch dynam_priv-6.16 --single-branch --depth 1
+6.16.0-kElevate: KERN_VER=$(KERN_REL)$(KERN_EXTRAVERSION)+
+6.16.0-kElevate: CONFIG=$(HOME)/linuxConfigs/5.14/USE_ME/symbiote_config
 
-6.3.0-kElevate: master
+# 6.16.0-kElevate: l_all
+# 6.16.0-kElevate: l_cp 
+# 6.16.0-kElevate: l_initrd
+# 6.16.0-kElevate: l_build l_ins l_cp l_initrd
+# 6.16.0-kElevate: grubby_add_kern enable_sudo_pw_checking
+6.16.0-kElevate: grubby_set_kele_default_and_reboot
+
+# l_all: docker_prepare_linux_build l_mrproper l_config l_build l_ins l_cp l_initrd
 
 # Baseline 5.14 kernel. Tested up & not including boot.
 5.14.0: FEDORA_RELEASE=35
@@ -149,7 +156,12 @@ help_docker:
 
 install_docker:
 	sudo dnf install dnf-plugins-core -y
-	sudo dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo -y
+#branch depending on fedora version
+	if [ "$(FEDORA_RELEASE)" -ge "41" ]; then \
+		sudo dnf config-manager addrepo --from-repofile=https://download.docker.com/linux/fedora/docker-ce.repo -y; \
+	else \
+		sudo dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo; \
+	fi
 	sudo dnf install --allowerasing docker-ce docker-ce-cli containerd.io -y
 
 docker_run:
@@ -164,7 +176,12 @@ docker_restart:
 	sudo docker restart $(CONT)
 
 docker_install_dev_packages:
-	$(RUN_IN_CONT) dnf group install "C Development Tools and Libraries" "Development Tools" -y
+# branch depending on fedora version
+	if [ "$(FEDORA_RELEASE)" -ge "41" ]; then \
+		$(RUN_IN_CONT) dnf install @c-development @development-tools -y; \
+	else \
+		$(RUN_IN_CONT) dnf group install "C Development Tools and Libraries" "Development Tools" -y; \
+	fi	
 	$(RUN_IN_CONT) dnf install -y $(CONTAINER_PACKAGES)
 
 docker_install_git_make:
@@ -277,7 +294,8 @@ l_chmod_chgrp_src:
 l_cp:
 	sudo docker cp $(CONT):/lib/modules/$(KERN_VER) /lib/modules/
 	sudo docker cp $(CONT):/boot/vmlinuz-$(KERN_VER) /boot/
-	sudo docker cp $(CONT):/boot/System.map-$(KERN_VER) /boot/
+	sudo docker cp $(CONT):/root/linux/System.map /boot/System.map-$(KERN_VER)
+# 	sudo docker cp $(CONT):/boot/System.map-$(KERN_VER) /boot/
 
 # I've been seeing the following error when I run this...
 # ERROR: src/skipcpio/skipcpio.c:191:main(): fwrite
