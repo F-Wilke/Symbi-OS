@@ -60,9 +60,15 @@ master_clean:
 # 6.16.0-kElevate: l_all
 # 6.16.0-kElevate: l_cp 
 # 6.16.0-kElevate: l_initrd
-# 6.16.0-kElevate: l_build l_ins l_cp l_initrd
+# 6.16.0-kElevate: l_cp_vmlinux
+# 6.16.0-kElevate: l_config
+# 6.16.0-kElevate: l_prepare
+# 6.16.0-kElevate: l_gdb_scripts
+# 6.16.0-kElevate: l_cp_gdb_scripts
+6.16.0-kElevate: l_build l_ins l_cp l_initrd
+# 6.16.0-kElevate: grubby_add_kern
 # 6.16.0-kElevate: grubby_add_kern enable_sudo_pw_checking
-6.16.0-kElevate: grubby_set_kele_default_and_reboot
+# 6.16.0-kElevate: grubby_set_kele_default_and_reboot
 
 # l_all: docker_prepare_linux_build l_mrproper l_config l_build l_ins l_cp l_initrd
 
@@ -273,6 +279,14 @@ l_run_cscope:
 l_make_cflow:
 	$(RUN_IN_CONT) $(MAKE) -C $(LINUX_PATH) cflow
 
+l_gdb_scripts:
+	$(RUN_IN_CONT) $(MAKE) -C $(LINUX_PATH) scripts_gdb
+
+l_cp_gdb_scripts:
+	sudo docker cp $(CONT):$(LINUX_PATH)/scripts/gdb ./gdb_scripts
+
+l_prepare:
+	$(RUN_IN_CONT) $(MAKE) -C $(LINUX_PATH) prepare
 
 l_ins_mods:
 	$(RUN_IN_CONT) $(MAKE) -C $(LINUX_PATH) modules_install -j$(NUM_CPUS)
@@ -345,7 +359,6 @@ copy_module_back:
 	mkdir -p $(MODULE_LOCAL_DEST)
 	sudo docker cp $(CONT):$(MODULE_DEST)/$(MODULE_NAME).ko $(MODULE_LOCAL_DEST)
 
-build_module_full: FEDORA_RELEASE=35
 build_module_full: copy_module_src build_module_in_container copy_module_back
 
 
@@ -365,7 +378,6 @@ prepare_libkallsyms_module: copy_module_src copy_kallsyms_src build_kallsyms run
 build_libkallsyms_module: FEDORA_RELEASE=35
 build_libkallsyms_module: copy_module_src copy_kallsyms_src build_kallsyms run_kallsyms build_module_in_container copy_module_back
 
-clean_module: FEDORA_RELEASE=35
 clean_module:
 	$(RUN_IN_CONT) sh -c 'cd $(MODULE_DEST) && make -C $(KERNEL_BUILD_PATH) M=$(MODULE_DEST) clean'
 	$(RUN_IN_CONT) sh -c 'rm -rf $(MODULE_DEST) && mkdir -p $(MODULE_DEST)'
@@ -373,16 +385,46 @@ clean_module:
 	rm -rf $(MODULE_LOCAL_DEST)/$(MODULE_NAME).ko
 
 
+stack_alias.ko: FEDORA_RELEASE=43
 stack_alias.ko: MODULE_SRC=./linux-kernel-module/stack_alias
 stack_alias.ko: MODULE_DEST=/root/stack_alias
 stack_alias.ko: MODULE_NAME=stack_alias
 stack_alias.ko: V=1
 stack_alias.ko: build_module_full
 
+stack_alias_clean: FEDORA_RELEASE=43
 stack_alias_clean: MODULE_SRC=./linux-kernel-module/stack_alias
 stack_alias_clean: MODULE_DEST=/root/stack_alias
 stack_alias_clean: MODULE_NAME=stack_alias
 stack_alias_clean: clean_module
+
+
+babel.ko: FEDORA_RELEASE=43
+babel.ko: MODULE_SRC=./linux-kernel-module/babel
+babel.ko: MODULE_DEST=/root/babel
+babel.ko: MODULE_NAME=babel
+babel.ko: V=1
+babel.ko: build_module_full
+
+babel_clean: FEDORA_RELEASE=43
+babel_clean: MODULE_SRC=./linux-kernel-module/babel
+babel_clean: MODULE_DEST=/root/babel
+babel_clean: MODULE_NAME=babel
+babel_clean: clean_module
+
+
+greeter.ko: FEDORA_RELEASE=43
+greeter.ko: MODULE_SRC=./linux-kernel-module/greeter
+greeter.ko: MODULE_DEST=/root/greeter
+greeter.ko: MODULE_NAME=greeter
+greeter.ko: V=1
+greeter.ko: build_module_full
+
+greeter_clean: FEDORA_RELEASE=43
+greeter_clean: MODULE_SRC=./linux-kernel-module/greeter
+greeter_clean: MODULE_DEST=/root/greeter
+greeter_clean: MODULE_NAME=greeter
+greeter_clean: clean_module
 # ====================================================
 # Grubby
 # ====================================================

@@ -78,21 +78,24 @@ extern const uint8_t _binary_greeter_ko_size;
 
 #ifdef DYNLINK
 
-extern void *__vmalloc(unsigned long size, gfp_t gfp_mask);
+extern void *vmalloc_noprof(unsigned long size);
 extern void vfree(const void *addr);
 
 extern int __cond_resched(void);
 
-extern unsigned long _copy_from_user(void *to, void *from, unsigned long n);
+// extern unsigned long _copy_from_user(void *to, void *from, unsigned long n);
 
 extern int load_module(struct load_info *info, char *uargs,
 		       int flags);
 
+extern int __x64_sys_init_module(void* umod, unsigned long len,
+                                 const char *uargs);
+
 // extern int printk(const char *fmt, ...);
 #else // DYNLINK
-// typedef (*void) (*__vmalloc_t)(unsigned long size, gfp_t gfp_mask);
-typedef void *(*__vmalloc_t)(unsigned long size, gfp_t gfp_mask);
-__vmalloc_t __vmalloc;
+// typedef (*void) (*vmalloc_t)(unsigned long size, gfp_t gfp_mask);
+typedef void *(*vmalloc_t)(unsigned long size);
+vmalloc_t vmalloc_noprof;
 
 typedef void (*vfree_t)(const void *addr);
 vfree_t vfree;
@@ -104,9 +107,9 @@ __cond_resched_t __cond_resched;
 typedef unsigned long (*_copy_from_user_t)(void *to, void *from, unsigned long n);
 _copy_from_user_t _copy_from_user;
 
-typedef int (*load_module_t)(struct load_info *info, char *uargs,
-                             int flags);
-load_module_t load_module;
+typedef int (*init_module_t)(void* umod, unsigned long len,
+                                 const char *uargs);
+init_module_t init_module;
 
 #endif // DYNLINK
 
