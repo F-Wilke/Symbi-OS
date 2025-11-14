@@ -349,6 +349,7 @@ KALLSYMS_SCRIPT_DEST ?= $(HOME)/kallsyms_script
 
 
 copy_module_src:
+	$(RUN_IN_CONT) sh -c 'rm -r $(MODULE_DEST)'
 	$(RUN_IN_CONT) sh -c 'mkdir -p $(MODULE_DEST)'
 	sudo docker cp $(MODULE_SRC)/. $(CONT):$(MODULE_DEST)
 
