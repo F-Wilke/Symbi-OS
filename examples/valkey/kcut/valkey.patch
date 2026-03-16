@@ -23,7 +23,7 @@ index 55cc15847..6bc758884 100644
  # Valkey static library, used to compile against for unit testing
  $(ENGINE_LIB_NAME): $(ENGINE_SERVER_OBJ)
 diff --git a/src/server.c b/src/server.c
-index 838459336..faa721aef 100644
+index 838459336..3f0050444 100644
 --- a/src/server.c
 +++ b/src/server.c
 @@ -79,6 +79,15 @@
@@ -42,10 +42,11 @@ index 838459336..faa721aef 100644
  #if defined(HAVE_SYSCTL_KIPC_SOMAXCONN) || defined(HAVE_SYSCTL_KERN_SOMAXCONN)
  #include <sys/sysctl.h>
  #endif
-@@ -7135,12 +7144,49 @@ int iAmPrimary(void) {
+@@ -7135,12 +7144,55 @@ int iAmPrimary(void) {
              (server.cluster_enabled && clusterNodeIsPrimary(getMyClusterNode())));
  }
  
++#ifdef EVACUATE
 +static inline int
 +resolve_sym(char *name, void **value)
 +{
@@ -81,7 +82,7 @@ index 838459336..faa721aef 100644
 +  
 +  assert(rc==0);
 +}
-+
++#endif
 +
  /* Main is marked as weak so that unit tests can use their own main function. */
  __attribute__((weak)) int main(int argc, char **argv) {
@@ -89,21 +90,65 @@ index 838459336..faa721aef 100644
      int j;
      char config_from_stdin = 0;
 -
-+    evacuate(); // Evacuate core 
++#ifdef EVACUATE
++    evacuate(); // Evacuate core
++#endif
++#ifndef BRACKET_PRIV
++    sym_elevate(); // Not tightly bracketing privilege, elevating for duration of program
++#endif    
      /* We need to initialize our libraries, and the server configuration. */
  #ifdef INIT_SETPROCTITLE_REPLACEMENT
      spt_init(argc, argv);
+@@ -7443,6 +7495,9 @@ __attribute__((weak)) int main(int argc, char **argv) {
+ 
+     aeMain(server.el);
+     aeDeleteEventLoop(server.el);
++#ifndef BRACKET_PRIV
++    symbi_fast_lower(); // if not bracketing privilege, lower before exiting
++#endif
+     return 0;
+ }
+ 
 diff --git a/src/socket.c b/src/socket.c
-index 336b250cc..824bbba70 100644
+index 336b250cc..9832ad9cd 100644
 --- a/src/socket.c
 +++ b/src/socket.c
-@@ -155,12 +155,30 @@ static void connSocketClose(connection *conn) {
+@@ -155,12 +155,83 @@ static void connSocketClose(connection *conn) {
      zfree(conn);
  }
  
 +#include "../../kcut/kcut_tcpmsg.kh"
 +#include "LINF/sym_all.h"
++
 +extern void symbi_fast_lower(void);
++
++#ifdef BRACKET_STACK
++#include <dlfcn.h>
++
++unsigned long kcut_ktos = 0;
++
++static inline int
++resolve_sym(char *name, void **value)
++{
++  char *error;
++  dlerror();  // clear as per manpage
++  *value = dlsym(RTLD_DEFAULT, name);
++  error = dlerror();
++  if (error != NULL) {
++    fprintf(stderr, "%s\n", error);
++    return 0;
++  }
++  return 1;
++}
++
++static inline void set_kcut_ktos(void)
++{
++  if (!resolve_sym("cpu_current_top_of_stack", (void **)&kcut_ktos)) {
++    printf("failed to resolve cpu_current_top_of_stack\n");
++    assert(0);
++  }
++}
++#endif
 +
  static int connSocketWrite(connection *conn, const void *data, size_t data_len) {
      /* Assert the main thread is not writing to a connection that is currently offloaded. */
@@ -115,13 +160,37 @@ index 336b250cc..824bbba70 100644
 +    iov.iov_base = (void *)data;
 +    iov.iov_len = data_len;
 +
++#ifdef BRACKET_STACK
++    if (!kcut_ktos) set_kcut_ktos();
++#endif
++
 +    const int KCUT_THRESHOLD = 20;
 +    static int kcut_cnt = 0;
 +    int ret;    
 +    if (kcut_cnt) {
++
++#ifdef BRACKET_PRIV
++#ifdef BRACKET_STACK
++      // privilege switching and stack switching
++      sym_elevate();
++      SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(kcut_ktos, ret = kcut_tcp_sendmsg(conn->fd, &iov));
++      symbi_fast_lower();
++#else
++      // privilege switch only, stay on user stack
 +      sym_elevate();
 +      ret = kcut_tcp_sendmsg(conn->fd, &iov);
 +      symbi_fast_lower();
++#endif 
++#else // no privilege switch, assume we have already elevated
++#ifdef BRACKET_STACK
++      // no privilege switch, switch to kernel stack
++      SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(kcut_ktos, ret = kcut_tcp_sendmsg(conn->fd, &iov));
++#else
++      // no privilege switch, remain on user stack
++      ret = kcut_tcp_sendmsg(conn->fd, &iov);
++#endif
++#endif // BRACKET_PRIV
++
 +      kcut_cnt--;
 +    } else {
 +      ret = write(conn->fd, data, data_len);
@@ -130,7 +199,7 @@ index 336b250cc..824bbba70 100644
      if (ret < 0 && errno != EAGAIN) {
          conn->last_errno = errno;
  
-@@ -191,9 +209,23 @@ static int connSocketRead(connection *conn, void *buf, size_t buf_len) {
+@@ -191,9 +262,47 @@ static int connSocketRead(connection *conn, void *buf, size_t buf_len) {
      /* Assert the main thread is not reading from a connection that is currently offloaded. */
      debugServerAssert(!(conn->flags & CONN_FLAG_ALLOW_ACCEPT_OFFLOAD) || !inMainThread() ||
                        ((client *)connGetPrivateData(conn))->io_read_state != CLIENT_PENDING_IO);
@@ -141,13 +210,37 @@ index 336b250cc..824bbba70 100644
 +    iov.iov_base = (void *)buf;
 +    iov.iov_len = buf_len;
 +
++#ifdef BRACKET_STACK
++    if (!kcut_ktos) set_kcut_ktos();
++#endif
++
 +    const int KCUT_THRESHOLD = 20;
 +    static int kcut_cnt = 0;
 +    int ret;    
 +    if (kcut_cnt) {
++      
++#ifdef BRACKET_PRIV
++#ifdef BRACKET_STACK
++      // privilege switching and stack switching
++      sym_elevate();
++      SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(kcut_ktos, ret = kcut_tcp_recvmsg(conn->fd, &iov));
++      symbi_fast_lower();
++#else
++      // privilege switch only, stay on user stack
 +      sym_elevate();
 +      ret = kcut_tcp_recvmsg(conn->fd, &iov);
 +      symbi_fast_lower();
++#endif 
++#else // no privilege switch, assume we have already elevated
++#ifdef BRACKET_STACK
++      // no privilege switch, switch to kernel stack
++      SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(kcut_ktos, ret = kcut_tcp_recvmsg(conn->fd, &iov)); 
++#else
++      // no privilege switch, remain on user stack
++      ret = kcut_tcp_recvmsg(conn->fd, &iov);
++#endif
++#endif // BRACKET_PRIV
++
 +      kcut_cnt--;
 +    } else {
 +      ret = read(conn->fd, buf, buf_len);
