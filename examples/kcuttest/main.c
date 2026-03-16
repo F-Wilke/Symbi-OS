@@ -223,7 +223,7 @@ int main(int argc, char **argv) {
   while (bloop) { bloop--; }
   printf("\t\t%d: %lx: USER BUSY LOOP TEST: END: %lu\n", mypid, cr3, bloop);
   
-  printf("\t\t%d: %lx: FORK TEST: forking %lu times with stack touches\n", mypid, cr3, num_forks);
+  printf("\t\t%d: %lx: FORK TEST: forking %u times with stack touches\n", mypid, cr3, num_forks);
   for (unsigned i=0; i<num_forks; i++) {
     pid_t cpid = fork();
     if (cpid==0) {
@@ -232,7 +232,7 @@ int main(int argc, char **argv) {
       stacktouch();
       exit(0);
     } else if (cpid<0) {
-      printf("\t\t%d: %lx: FORK TEST: fork failed at iteration %lu\n", mypid, cr3, i);
+      printf("\t\t%d: %lx: FORK TEST: fork failed at iteration %u\n", mypid, cr3, i);
       break;
     }
   }
