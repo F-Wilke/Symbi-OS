@@ -24,7 +24,7 @@
 	url = git@github.com:F-Wilke/Tools.git
 [submodule "Symlib"]
 	path = Symlib
-	url = git@github.com:Symbi-OS/Symlib.git
+	url = git@github.com:F-Wilke/Symlib.git
 [submodule "LinuxPrototypes"]
 	path = LinuxPrototypes
 	url = git@github.com:Symbi-OS/LinuxPrototypes.git
