@@ -258,31 +258,34 @@ int main(int argc, char **argv) {
   printf("\t\t%d: %lx: FORK TEST: END\n", mypid , cr3);
 
   printf("\t\t%d: %lx: PTHREAD TEST: spawning %lu times with stack touches\n", mypid, cr3, num_spawns);
-  pthread_barrier_init(&barrier, NULL, num_spawns);
-  
-  pthread_t* threads = malloc(sizeof(pthread_t)*num_spawns);
+  if (num_spawns) {
+    pthread_barrier_init(&barrier, NULL, num_spawns);
+    
+    pthread_t* threads = malloc(sizeof(pthread_t)*num_spawns);
 
-  for (unsigned i=0; i<num_spawns; i++) {
-    thread_arg_t* argptr = malloc(sizeof(thread_arg_t));
-    argptr->arg = i;
-    argptr->num_increments = num_increments;
-    int rc = pthread_create(&threads[i], NULL, (void *(*)(void *))threadfn, (void *)argptr);
-    if (rc) {
-      printf("\t\t%d: %lx: PTHREAD TEST: pthread_create failed at iteration %lu with rc=%d\n", mypid, cr3, i, rc);
-      break;
+    for (unsigned i=0; i<num_spawns; i++) {
+      thread_arg_t* argptr = malloc(sizeof(thread_arg_t));
+      argptr->arg = i;
+      argptr->num_increments = num_increments;
+      int rc = pthread_create(&threads[i], NULL, (void *(*)(void *))threadfn, (void *)argptr);
+      if (rc) {
+        printf("\t\t%d: %lx: PTHREAD TEST: pthread_create failed at iteration %lu with rc=%d\n", mypid, cr3, i, rc);
+        break;
+      }
     }
-  }
-  //join all threads before exiting
-  for (unsigned i=0; i<num_spawns; i++) {
-    int rc = pthread_join(threads[i], NULL);
-    if (rc) {
-      printf("\t\t%d: %lx: PTHREAD TEST: pthread_join failed at iteration %lu with rc=%d\n", mypid, cr3, i, rc);
-      break;
+    //join all threads before exiting
+    for (unsigned i=0; i<num_spawns; i++) {
+      int rc = pthread_join(threads[i], NULL);
+      if (rc) {
+        printf("\t\t%d: %lx: PTHREAD TEST: pthread_join failed at iteration %lu with rc=%d\n", mypid, cr3, i, rc);
+        break;
+      }
     }
-  }
-  pthread_barrier_destroy(&barrier);
+    pthread_barrier_destroy(&barrier);
 
-  free(threads);  
+    free(threads);  
+  }
+
   //check counter value to make sure threads ran properly
   printf("\t\t%d: %lx: PTHREAD TEST: counter value is %u, expected %lu\n", mypid, cr3, counter, (unsigned long)num_spawns*num_increments);
 
