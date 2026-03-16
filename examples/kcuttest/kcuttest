@@ -1,4 +1,6 @@
 #set -x
+LIBK=${LIBK:-/proc/libkallsyms.so}
+[[ -z $LLIBK ]] && LLIBK=${LIBK##*/}
 
 typeset -i RMMOD=${RMMOD:-0}
 typeset -i BGWRK=${BGWRK:-0}
@@ -13,6 +15,11 @@ typeset -i BGWRK=${BGWRK:-0}
 
 (( BGWRK )) && echo "STARTED BACKGROUND BUSY LOOP: $bgpid"
 
+LIBK=/proc/libkallsyms.so
+#[[  $LIBK -nt $LLIBK ]] && {
+#   cp $LIBK $LLIBK
+#    make clean; make
+#}
 
 LD_LIBRARY_PATH=~/Symbi-OS/Symlib/dynam_build:$PWD
 echo $LD_LIBRARY_PATH

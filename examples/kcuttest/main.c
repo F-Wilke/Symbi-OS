@@ -89,7 +89,7 @@ resolve_sym(char *name, void **value)
   return 1;
 }
 
-void evacuate()
+void evacuate(int acquire)
 {
   uintptr_t ktos;
   int rc;
@@ -102,10 +102,15 @@ void evacuate()
     assert(0);
   }
 
-  SYM_ON_KERN_STACK_DYNSYM_DO(ktos, 
-			      rc=acquire_exclusive_cpu(cpu,EVAC_KILL_NICELY));
-
-  printf("acquire_exclusive_cpu: %d\n", rc);
+  if (acquire) {
+    SYM_ON_KERN_STACK_DYNSYM_DO(ktos, 
+				rc=acquire_exclusive_cpu(cpu,EVAC_KILL_NICELY));
+    printf("acquire_exclusive_cpu: %d\n", rc);
+  } else {
+    SYM_ON_KERN_STACK_DYNSYM_DO(ktos, 
+				release_exclusive_cpu(cpu));
+    printf("release_exclusive_cpu:\n");
+  }
   
   assert(rc==0);
 }
@@ -170,7 +175,6 @@ int main(int argc, char **argv) {
   if (argc > 5) num_forks = atoi(argv[5]);
   if (argc > 6) num_spawns = atoi(argv[6]);
   if (argc > 7) num_increments = atoi(argv[7]);
-
   
   printf("%d: BASIC KCUT TESTS: BEGIN: ssec=%d bloop=%lu yieldcnt=%lu\n", mypid, ssec, bloop, yieldcnt);
 
@@ -188,7 +192,7 @@ int main(int argc, char **argv) {
 
   printf("\t%d: ELEVATED TESTS: START\n", mypid);
 
-  if (evac) evacuate();
+  if (evac) evacuate(1);
   
   sym_elevate();
   
@@ -238,7 +242,7 @@ int main(int argc, char **argv) {
   while (bloop) { bloop--; }
   printf("\t\t%d: %lx: USER BUSY LOOP TEST: END: %lu\n", mypid, cr3, bloop);
   
-  printf("\t\t%d: %lx: FORK TEST: forking %lu times with stack touches\n", mypid, cr3, num_forks);
+  printf("\t\t%d: %lx: FORK TEST: forking %u times with stack touches\n", mypid, cr3, num_forks);
   for (unsigned i=0; i<num_forks; i++) {
     pid_t cpid = fork();
     if (cpid==0) {
@@ -247,12 +251,11 @@ int main(int argc, char **argv) {
       stacktouch();
       exit(0);
     } else if (cpid<0) {
-      printf("\t\t%d: %lx: FORK TEST: fork failed at iteration %lu\n", mypid, cr3, i);
+      printf("\t\t%d: %lx: FORK TEST: fork failed at iteration %u\n", mypid, cr3, i);
       break;
     }
   }
   printf("\t\t%d: %lx: FORK TEST: END\n", mypid , cr3);
-
 
   printf("\t\t%d: %lx: PTHREAD TEST: spawning %lu times with stack touches\n", mypid, cr3, num_spawns);
   pthread_barrier_init(&barrier, NULL, num_spawns);
@@ -285,9 +288,10 @@ int main(int argc, char **argv) {
 
   printf("\t\t%d: %lx: PTHREAD TEST: END\n", mypid, cr3);
 
-
-  
   sym_lower();
+  
+  if (evac) evacuate(0);
+
   printf("\t%d: ELEVATED TESTS: END\n", mypid);  
   printf("%d: BASIC KCUT TESTS: END\n", mypid);
   return 0;

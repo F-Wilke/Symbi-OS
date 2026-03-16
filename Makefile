@@ -55,13 +55,13 @@ master_clean:
 6.16.0-kElevate: KERN_EXTRAVERSION=-kElevate+
 6.16.0-kElevate: LINUX_BUILD=--branch dynam_priv-6.16 --single-branch --depth 1
 6.16.0-kElevate: KERN_VER=$(KERN_REL)$(KERN_EXTRAVERSION)
-6.16.0-kElevate: CONFIG=./linuxConfigs/6.16/config-6.16.8-200.fc42.x86_64_Elevate
+6.16.0-kElevate: CONFIG=./linuxConfigs/6.16/config-6.16.8-200.fc42.x86_64_Elevate_pnone
 6.16.0-kElevate: LOCAL_LINUX_PATH=./linux
 
 # JA CLEAN BUILD -- apply a new config
-# 6.16.0-kElevate: l_mrproper l_config l_build
+6.16.0-kElevate: l_mrproper l_config l_build
 # JA REBUILD with same config
-6.16.0-kElevate: l_build
+# 6.16.0-kElevate: l_build
 # JA INSTALL new kernel
 #6.16.0-kElevate: l_ins
 
@@ -123,16 +123,6 @@ l_all: docker_prepare_linux_build l_mrproper l_config l_build l_ins l_cp l_initr
 # ========================
 # Common variables
 # ========================
-<<<<<<< Updated upstream
-CONT=linux_builder$(FEDORA_RELEASE)
-RUN_IN_CONT=sudo docker exec $(CONT)
-RUN_IN_CONT_IT=sudo docker exec -it $(CONT)
-RUN_IN_CONT=sudo 
-RUN_IN_CONT_IT=sudo 
-
-# HOME=/root
-HOME=$(PWD)
-=======
 #CONT=linux_builder$(FEDORA_RELEASE)
 CONT=
 #RUN_IN_CONT=sudo docker exec $(CONT)
@@ -141,7 +131,6 @@ RUN_IN_CONT=
 RUN_IN_CONT_IT=
 
 HOME=${PWD}
->>>>>>> Stashed changes
 LINUX_PATH=$(HOME)/linux
 NUM_CPUS=$(shell nproc)
 
