@@ -47,7 +47,7 @@ int stacktouch(void)
   return sum;
 }
 
-int heaptouch(void)
+int k_heaptouch(void)
 {
   const int PGSIZE=4096;
   const int n=PGSIZE * 8;
@@ -57,6 +57,20 @@ int heaptouch(void)
   for (int i=0; i<n; i+=4096) { data[i]=0xff; sum += data[i]; }  
   
   vfree((void*)data);
+  
+  return sum;
+}
+
+int heaptouch(void)
+{
+  const int PGSIZE=4096;
+  const int n=PGSIZE * 8;
+  volatile char *data = malloc(n);
+  int sum = 0;
+
+  for (int i=0; i<n; i+=4096) { data[i]=0xff; sum += data[i]; }  
+  
+  free((void*)data);
   
   return sum;
 }
@@ -124,6 +138,7 @@ void threadfn(thread_arg_t* argptr)
     pthread_mutex_unlock(&counter_lock);
 
     heaptouch();
+    k_heaptouch();
   }
   
   
