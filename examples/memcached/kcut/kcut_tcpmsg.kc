@@ -1,0 +1,84 @@
+#include <linux/file.h>
+#include <linux/fs.h>
+#include <linux/socket.h>
+#include <net/tcp.h>
+
+#include "kcut_tcpmsg.kh"
+
+// consider switching to tcp_read_sock
+int kcut_tcp_recvmsg(int fd, struct iovec *iov)
+{
+  struct file *file;
+  struct socket *sock;
+  struct kiocb kiocb;
+  struct msghdr msg;
+  int ret = 0;
+
+  // int nonblock = 64;         // from ukl shortcut_tcp_recvmsg ???
+  // FIXME: nonblock argument not used anymore now is a setting in flags
+  //        check if we need to be adjust flags value
+  int flags    = 0;          // from ukl shortcut_tcp_recvmsg ??? 
+
+    //A: Translate fd to sock *
+  //   From fs/read_write.c:ksys_write : 
+  //     1. fd -> struct fd : 
+  //        Fiven that fdget_pos is an internal routine we will use fget(fd) -- module friendly
+  CLASS(fd, f)(fd); // acquire a 'struct fd' f from int fd -- clean when f goes out of scope - ref counted  
+  if (WARN_ON(fd_empty(f))) return ret; 
+  //     2. struct fd to file *
+  file = fd_file(f);
+  if (WARN_ON(!file)) return ret;
+ 
+  //   3. file -> struct sock * : without reference counting since we have reference count on fd 
+  sock = file->private_data;
+
+  // from ukl shortcut_tcp_recvmsg
+  init_sync_kiocb(&kiocb, file);
+  kiocb.ki_pos = 0;
+  msg.msg_iocb = &kiocb;
+  iov_iter_init(&msg.msg_iter, WRITE, iov, 1,
+		iov->iov_len);
+
+  // FIXME: tcp_recvmsg is not public using sock->ops->recvmsg reaccess cost
+  // JA: FIXME: examine nonblock behaviour might need to update
+  // flags value as this is now set in flags
+  ret = sock->ops->recvmsg(sock, &msg, iov->iov_len, flags);
+  return ret;
+}
+
+int kcut_tcp_sendmsg(int fd, struct iovec *iov)
+{
+  struct file *file;
+  struct socket *sock;
+  struct sock *sk;
+  struct kiocb kiocb;
+  struct msghdr msg;
+  int ret = 0;
+
+  //A: Translate fd to sock *
+  //   From fs/read_write.c:ksys_write : 
+  //     1. fd -> struct fd : 
+  //        Fiven that fdget_pos is an internal routine we will use fget(fd) -- module friendly
+  CLASS(fd, f)(fd); // acquire a 'struct fd' f from int fd -- clean when f goes out of scope - ref counted  
+  if (WARN_ON(fd_empty(f))) return ret; 
+  //     2. struct fd to file *
+  file = fd_file(f);
+  if (WARN_ON(!file)) return ret;
+ 
+  //   3. file -> struct sock * : without reference counting since we have reference count on fd 
+  sock = file->private_data;
+  sk = sock->sk;
+
+  // B: from a combination of new_sync_write and sock_write_iter init kiocb and iov
+  init_sync_kiocb(&kiocb, file);
+  kiocb.ki_pos = 0;
+  iov_iter_init(&msg.msg_iter, ITER_SOURCE, iov, 1,
+		iov->iov_len);
+  msg.msg_iocb = &kiocb;
+
+  // C: send the message
+  ret = tcp_sendmsg(sk, &msg, iov->iov_len);
+  
+  return ret;
+}
+

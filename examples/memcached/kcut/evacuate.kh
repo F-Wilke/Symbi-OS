@@ -1,0 +1,11 @@
+#ifndef __KEVACUATE__H__
+#define __KEVACUATE__H__
+
+#define EVAC_MIGRATE_ONLY 0
+#define EVAC_KILL_NICELY 1
+#define EVAC_KILL_ALLOTHERS 2
+
+int acquire_exclusive_cpu(int reserved_cpu, int killifneeded);
+void release_exclusive_cpu(int reserved_cpu);
+
+#endif // __KEVACUATE__H__
