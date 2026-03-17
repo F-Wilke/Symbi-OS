@@ -1,0 +1,8 @@
+#ifndef __KCUT_TCPMSG_KH__
+
+struct iovec;
+
+int kcut_tcp_recvmsg(int fd, struct iovec *iov);
+int kcut_tcp_sendmsg(int fd, struct iovec *iov);
+
+#endif  // __KCUT_TCPMSG_KH__
