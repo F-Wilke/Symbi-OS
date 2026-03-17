@@ -36,7 +36,7 @@ int kcut_tcp_recvmsg(int fd, struct iovec *iov)
   init_sync_kiocb(&kiocb, file);
   kiocb.ki_pos = 0;
   msg.msg_iocb = &kiocb;
-  iov_iter_init(&msg.msg_iter, WRITE, iov, 1,
+  iov_iter_init(&msg.msg_iter, ITER_DEST, iov, 1,
 		iov->iov_len);
 
   // FIXME: tcp_recvmsg is not public using sock->ops->recvmsg reaccess cost
