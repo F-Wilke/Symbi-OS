@@ -78,7 +78,7 @@ int mmap_stack_test(unsigned operation)
     
     // mmap the file with MAP_PRIVATE so pages aren't immediately resident
     mapped_area = mmap(NULL, map_size, PROT_READ | PROT_WRITE, 
-                       MAP_PRIVATE, fd, 0);
+                       MAP_ANON | MAP_PRIVATE, -1, 0);
     if (mapped_area == MAP_FAILED) {
         perror("mmap");
         close(fd);
@@ -106,7 +106,7 @@ int mmap_stack_test(unsigned operation)
     
     // Find two consecutive non-present pages (A and B)
     // mincore sets bit 0 if page is resident
-    for (size_t i = 0; i < num_pages - 2; i++) {
+    for (size_t i = num_pages - 3; i > 0; i--) {
         if (!(vec[i] & 1) && !(vec[i+1] & 1) && !(vec[i+2] & 1)) {
             page_A_idx = i;
             page_B_idx = i + 1;
@@ -211,6 +211,11 @@ int mmap_stack_test(unsigned operation)
             : "r" (saved_rsp)
             : "memory"
         );
+
+        pf_cnt = pf_adaptor_pf_cnt_get();
+        df_cnt = pf_adaptor_df_cnt_get();
+
+        printf("\t%d: current df counter %lu, pf counter: %lu\n", mypid, df_cnt, pf_cnt);
         
     } else {
         printf("\t%d: Caught fault during test\n", mypid);
