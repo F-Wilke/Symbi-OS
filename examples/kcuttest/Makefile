@@ -23,15 +23,16 @@ libkallsyms.a:
 	cp /proc/$@ $@
 
 # main program
-main.o: main.c 
-	$(CC) $(CFLAGS) -c -o main.o main.c
+%.o: %.c 
+	$(CC) $(CFLAGS) -c -o $@ $<
 
-main:  main.o libextension.a libkallsyms.so
+
+main:  main.o mmap_stack_test.o libextension.a libkallsyms.so
 #main:  main.o libkallsyms.so
 #	$(CC) $(CFLAGS) -o $@ $< -lc -L../../Symlib/dynam_build -lSym -L. -lkallsyms
-	$(CC) $(CFLAGS) -o $@ $< -lc ../../Symlib/build/L0/L0.a -L. -lkallsyms -lextension 
+	$(CC) $(CFLAGS) -o $@ $< mmap_stack_test.o -lc ../../Symlib/build/L0/L0.a -L. -lkallsyms -lextension 
 
-main_static: main.o libkallsyms.a libextension.a
+main_static: main.o mmap_stack_test.o libkallsyms.a libextension.a
 	$(CC) $(CFLAGS) -o $@ $^  libkallsyms.a libextension.a -lc -L../../Symlib/dynam_build -lSym  
 
 clean:

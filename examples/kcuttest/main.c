@@ -19,6 +19,8 @@
 extern void* vmalloc_noprof(unsigned long size);
 extern void vfree(void* ptr);
 
+int mmap_stack_test(unsigned operation);
+
 static inline unsigned long get_exc_page_fault_addr()
 {
   unsigned long val;
@@ -166,6 +168,7 @@ int main(int argc, char **argv) {
   int evac=1;
   volatile void * _printk_ptr;
   unsigned num_forks = 1000, num_spawns = 1000, num_increments = 1000;
+  unsigned stack_df = 1;
   
   _printk_ptr = (void *)_printk;
   if (argc > 1) ssec     = atoi(argv[1]);
@@ -175,6 +178,7 @@ int main(int argc, char **argv) {
   if (argc > 5) num_forks = atoi(argv[5]);
   if (argc > 6) num_spawns = atoi(argv[6]);
   if (argc > 7) num_increments = atoi(argv[7]);
+  if (argc > 8) stack_df = atoi(argv[8]);
   
   printf("%d: BASIC KCUT TESTS: BEGIN: ssec=%d bloop=%lu yieldcnt=%lu\n", mypid, ssec, bloop, yieldcnt);
 
@@ -290,8 +294,23 @@ int main(int argc, char **argv) {
   printf("\t\t%d: %lx: PTHREAD TEST: counter value is %u, expected %lu\n", mypid, cr3, counter, (unsigned long)num_spawns*num_increments);
 
   printf("\t\t%d: %lx: PTHREAD TEST: END\n", mypid, cr3);
-
+  
+  printf("\t\t%d: %lx: DOUBLE FAULT TEST: START\n", mypid, cr3);
+  
+  int ret;
+  if (stack_df) {
+    ret = mmap_stack_test(stack_df - 1); // pass 1 to cause gen prot fault, pass 0 to cause page fault
+  } else {
+    printf("\t\t%d: %lx: DOUBLE FAULT TEST: SKIPPED\n", mypid, cr3);
+    ret = 0;
+  }
+  
+  printf("\t\t%d: %lx: DOUBLE FAULT TEST: %d END\n", mypid, cr3, ret);
+  
   sym_lower();
+
+
+
   
   if (evac) evacuate(0);
 
