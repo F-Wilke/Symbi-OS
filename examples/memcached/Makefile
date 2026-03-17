@@ -22,3 +22,12 @@ clean:
 
 distclean: clean
 	-${RM} -rf $(wildcard memcached)
+
+memcached-vanilla/Makefile:
+	git clone git@github.com:memcached/memcached.git memcached-vanilla
+	cd memcached-vanilla && git checkout -b 1.6.41 1.6.41
+	cd memcached-vanilla && ./autogen.sh
+	cd memcached-vanilla && ./configure
+
+memcached-vanilla/memcached: memcached-vanilla/Makefile
+	make -C memcached memcached
