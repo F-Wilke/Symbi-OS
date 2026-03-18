@@ -102,3 +102,25 @@ pf_adaptor_asm_fix_err_code_uw:
 	int3
 	
 
+
+	.text
+	.align 16
+	.global pf_adaptor_asm_fix_err_code_gp
+pf_adaptor_asm_fix_err_code_gp:
+	// This will be executed on the kernel IST stack
+	// fix double fault 
+	// x86 allows immediate and memory operands without using a register
+	incq  pf_adaptor_gp_cnt
+	
+	testq %rsp, %rsp
+	js .Lgp_skip_stack_touch
+	sti //if we page fault again, we must not have interrupts disabled, otherwise do_user_addr_fault will issue a warning.
+	movb $1, -0x1000(%rsp) //touch stack so that 
+	cli
+	
+.Lgp_skip_stack_touch:
+
+	jmp   *pf_adaptor_asm_exc_general_protection	
+	// int3 to satifiy objtool desire for a trap after a speculative jump to try and improve security
+	int3
+

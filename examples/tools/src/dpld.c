@@ -31,12 +31,12 @@ void (*set_app_got)(app_got_t* got);
     fprintf(stderr, fmt, ##__VA_ARGS__); \
   } while(0)
 
-static void extra_init(unsigned long pfaddr, unsigned long dfaddr, int *ret)
+static void extra_init(unsigned long pfaddr, unsigned long dfaddr, unsigned long gpaddr, int *ret)
 {
-  int (*func)(unsigned long, unsigned long);
+  int (*func)(unsigned long, unsigned long, unsigned long);
   func = (void *)kallsyms_lookup_name("pf_adaptor_init");
   if (func) {
-    *ret = func(pfaddr, dfaddr);
+    *ret = func(pfaddr, dfaddr, gpaddr);
   } else {
     *ret = -1;
   }
@@ -131,10 +131,10 @@ static int load_ext_module() {
 
   VPRINTF("init_load_module: ret=%d\n", ret);
 
-  VPRINTF("extra_init: ktos=%lx pfaddr=%lx dfaddr=%lx\n", ktos, pfaddr, dfaddr);
+  VPRINTF("extra_init: ktos=%lx pfaddr=%lx dfaddr=%lx gpaddr=%lx\n", ktos, pfaddr, dfaddr, gpaddr);
   if (ret == 0) {
     SYM_ON_KERN_STACK_DYNSYM_DO(ktos, 
-				extra_init(pfaddr, dfaddr, &ret));
+				extra_init(pfaddr, dfaddr, gpaddr, &ret));
     VPRINTF("extra_init: ret=%d\n", ret);
     assert(ret != -1);
   }

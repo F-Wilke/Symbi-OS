@@ -6,6 +6,7 @@
 // from assembly code
 extern unsigned long pf_adaptor_asm_fix_err_code_u;
 extern unsigned long pf_adaptor_asm_fix_err_code_uw;
+extern unsigned long pf_adaptor_asm_fix_err_code_gp;
 
 // module specfic statics
 unsigned long int pf_adaptor_pf_cnt = 0;
@@ -37,17 +38,19 @@ gate_set_offset(gate_desc *gate, unsigned long addr)
 
 unsigned long pf_adaptor_asm_exc_page_fault = 0;
 unsigned long pf_adaptor_asm_exc_double_fault = 0;
+unsigned long pf_adaptor_asm_exc_general_protection = 0;
 int pf_adaptor_init(unsigned long asm_exc_page_fault,
 		    unsigned long asm_exc_double_fault,
 		    unsigned long asm_exc_general_protection)
 {
   print_idt_entries();
 
-  printk("old handlers at %lx (pf), %lx (df)\n", 
-         asm_exc_page_fault, asm_exc_double_fault);
-  printk("new handlers at %lx (pf), %lx (df) \n", 
+  printk("old handlers at %lx (pf), %lx (df), %lx (gp)\n", 
+         asm_exc_page_fault, asm_exc_double_fault, asm_exc_general_protection);
+  printk("new handlers at %lx (pf), %lx (df), %lx (gp) \n", 
          (unsigned long)&pf_adaptor_asm_fix_err_code_u,
-	 (unsigned long)&pf_adaptor_asm_fix_err_code_uw);
+	 (unsigned long)&pf_adaptor_asm_fix_err_code_uw,
+	 (unsigned long)&pf_adaptor_asm_fix_err_code_gp);
 
   gate_desc * idt = idt_adaptor_clone();
   gate_desc   gate;
@@ -94,6 +97,23 @@ int pf_adaptor_init(unsigned long asm_exc_page_fault,
   } else {
     gate_set_offset(&gate, (unsigned long)&pf_adaptor_asm_fix_err_code_uw);
     write_idt_entry(idt, X86_TRAP_DF, &gate); 
+    dirty = true;
+  }
+
+  if (pf_adaptor_asm_exc_general_protection == 0) {
+    pf_adaptor_asm_exc_general_protection = asm_exc_general_protection;
+  }
+
+  read_gate(idt, X86_TRAP_GP, &gate);
+  val = gate_offset(&gate);
+  if (val != (unsigned long)asm_exc_general_protection) {
+    if (val != (unsigned long)&pf_adaptor_asm_fix_err_code_gp) {
+            printk("WARNING: unexpected GP handler installed %lx", val); 
+      goto error;
+    }
+  } else {
+    gate_set_offset(&gate, (unsigned long)&pf_adaptor_asm_fix_err_code_gp);
+    write_idt_entry(idt, X86_TRAP_GP, &gate); 
     dirty = true;
   }
   

@@ -157,8 +157,15 @@ int mmap_stack_test(unsigned operation)
     // RFLAGS
     // [RSP]
     // [SS]
+    void *new_stack_ptr;
+    if (operation == 2) {
+        printf("\t%d: Operation 2 selected - will cause general protection fault by writing to reserved CR4 bit, set up stack to allow the exception frame\n", mypid);
+        new_stack_ptr = (char *)page_B + 0x40; //8 qwords for the exception frame and a call
+    }
+    else {
+        new_stack_ptr = (char *)page_B + 16;
+    }
 
-    void *new_stack_ptr = (char *)page_B + 16;
     void *unmapped_page = (char *)mapped_area + map_size + PAGE_SIZE;
     
     printf("\t\tNew stack pointer: %p (16 bytes into page B)\n", new_stack_ptr);
