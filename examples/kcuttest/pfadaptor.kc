@@ -8,6 +8,10 @@ extern unsigned long pf_adaptor_asm_fix_err_code_u;
 extern unsigned long pf_adaptor_asm_fix_err_code_uw;
 extern unsigned long pf_adaptor_asm_fix_err_code_gp;
 
+extern unsigned long pf_adaptor_asm_fix_ist_err_code;
+extern unsigned long pf_adaptor_asm_fix_ist_no_err_code;
+
+
 // module specfic statics
 unsigned long int pf_adaptor_pf_cnt = 0;
 unsigned long int pf_adaptor_df_cnt = 0;
@@ -219,20 +223,33 @@ void print_idt_entries(void) {
 }
 
 
-extern unsigned long pf_adaptor_asm_fix_err_code_u;
+
 extern unsigned long ret_stub;
 
-void test_pfasm() {
+uint64_t fake_target_stack[10];
+
+void test_pfasm(int arg) {
   struct task_struct *cur_task = current;
   unsigned long stack_resident[20];
+  unsigned long old_stack;
 
   //initialize the stack resident variable to ensure it is resident in memory
   for (int i = 0; i < 20; i++) {
     stack_resident[i] = i;
   }
 
+  asm volatile (
+    "mov %%rsp, %0\n"
+    : "=r" (old_stack)
+  );
+
   if (cur_task == NULL) {//this never happens but I want the label to be before its reference
   my_return:
+      asm volatile (
+        "mov %0, %%rsp\n"
+        : : "r" (old_stack)
+      );
+
       printk("test_pfasm: returned from pf_adaptor_asm_fix_err_code_u, stack_resident=%lu\n",
 	     (unsigned long)&(stack_resident[0]));
 
@@ -245,11 +262,26 @@ void test_pfasm() {
   }
 
   printk("test_pfasm: pf_adaptor_asm_fix_err_code_u @ 0x%lx, current task @ 0x%lx\n",
-	 (unsigned long)&pf_adaptor_asm_fix_err_code_u, (unsigned long)cur_task);
+	 (unsigned long)&pf_adaptor_asm_fix_ist_err_code, (unsigned long)cur_task);
   // call the pfasm function that will trigger a page fault and return to the caller
   pf_adaptor_asm_exc_page_fault = (unsigned long)(&&my_return);
+      
+  uint64_t fake_frame[6];
+  fake_frame[0] = 0x00;           // error_code
+  fake_frame[1] = 0x12345678;     // rip (fake)
+  fake_frame[2] = 0x10;           // cs
+  fake_frame[3] = 0x202;          // rflags
+
+  if (arg) //kernel stack (will be used)
+    fake_frame[4] = (uint64_t)&fake_target_stack[9]; // rsp (negative to trigger kernel path)
+  else //user stack (will not be used)
+    fake_frame[4] = 0;   
+  
+    // fake_frame[4] = 0x8000000000000000ULL; // rsp (negative to trigger kernel path)
+  fake_frame[5] = 0x18;           // ss
+    
   asm volatile (
-    "jmp pf_adaptor_asm_fix_err_code_u\n"
+    "jmp pf_adaptor_asm_fix_ist_err_code\n"
   );
 
 }
