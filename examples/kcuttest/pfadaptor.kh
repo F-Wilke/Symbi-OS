@@ -8,6 +8,6 @@ unsigned long pf_adaptor_pf_cnt_get(void);
 unsigned long pf_adaptor_df_cnt_get(void);
 unsigned long pf_adaptor_gp_cnt_get(void);
 
-void test_pfasm(void);
+void test_pfasm(int arg);
 
 #endif
