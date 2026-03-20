@@ -1,0 +1,9 @@
+#ifndef __STACKADAPTOR_KH__
+#define __STACKADAPTOR_KH__
+
+void sa_stack_addrs(unsigned long *start, unsigned long *end);
+long sa_stack_walk(void);
+long sa_stack_pin(void);
+void sa_stack_unpin(void);
+
+#endif  // __STACKADAPTOR_KH__

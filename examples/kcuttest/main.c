@@ -13,11 +13,41 @@
 #include "greeter.kh"
 #include "pfadaptor.kh"
 #include "evacuate.kh"
+#include "stackadaptor.kh"
 
 #include <pthread.h>
 
 extern void* vmalloc_noprof(unsigned long size);
 extern void vfree(void* ptr);
+
+// discuss this not sure this is right
+__thread uintptr_t myktos = 0;
+
+static inline int
+resolve_sym(char *name, void **value)
+{
+  char *error;
+  dlerror();  // clear as per manpage
+  *value = dlsym(RTLD_DEFAULT, name);
+  error = dlerror();
+  if (error != NULL) {
+    fprintf(stderr, "%s\n", error);
+    return 0;
+  }
+  return 1;
+}
+
+static inline uintptr_t
+ktos()
+{
+  if (myktos==0) {
+    if (!resolve_sym("cpu_current_top_of_stack", (void **)&myktos)) {
+      printf("failed to resolve cpu_current_top_of_stack\n");
+      assert(0);
+    }
+  }
+  return myktos;
+}
 
 static inline unsigned long get_exc_page_fault_addr()
 {
@@ -33,6 +63,59 @@ static inline unsigned long get_exc_page_fault_addr()
 		    : "memory" );
 #endif
   return val;
+}
+
+// for the sake of documentation 
+int getstack(void **start, size_t *size) {
+    FILE *fp;
+    char line[256];
+    char perms[5], dev[6], path[128];
+    unsigned long addr_start, addr_end, offset, inode;
+
+    fp = fopen("/proc/self/maps", "r");
+    if (!fp) return -1;
+
+    while (fgets(line, sizeof(line), fp)) {
+        if (strstr(line, "[stack]")) {
+            sscanf(line, "%lx-%lx %s %lx %s %lu %s",
+                   &addr_start, &addr_end, perms, &offset, dev, &inode, path);
+            *start = (void *)addr_start;
+            *size = addr_end - addr_start;
+            fclose(fp);
+            return 0;
+        }
+    }
+
+    fclose(fp);
+    return -1;
+}
+
+static inline int pinstack(void)
+{
+  long rc;
+  SYM_ON_KERN_STACK_DYNSYM_DO(ktos(), rc=sa_stack_pin());
+  fprintf(stderr, "stack_pin(): rc=%ld\n", rc);
+  return 0;
+}
+
+static inline void unpinstack(void)
+{
+  SYM_ON_KERN_STACK_DYNSYM_DO(ktos(), sa_stack_unpin());
+}
+
+static inline void walkstack(void)
+{
+  long present;
+  SYM_ON_KERN_STACK_DYNSYM_DO(ktos(), present=sa_stack_walk());
+  fprintf(stderr, "found %ld pages present of stack\n", present);
+}
+			      
+static inline int stackaddrs(void)
+{
+  unsigned long stack, end;
+  SYM_ON_KERN_STACK_DYNSYM_DO(ktos(), sa_stack_addrs(&stack, &end));
+  fprintf(stderr, "stack: 0x%lx end:%lx\n", stack, end);
+  return 0;
 }
 
 int stacktouch(void)
@@ -75,39 +158,20 @@ int heaptouch(void)
   return sum;
 }
 
-static inline int
-resolve_sym(char *name, void **value)
-{
-  char *error;
-  dlerror();  // clear as per manpage
-  *value = dlsym(RTLD_DEFAULT, name);
-  error = dlerror();
-  if (error != NULL) {
-    fprintf(stderr, "%s\n", error);
-    return 0;
-  }
-  return 1;
-}
 
 void evacuate(int acquire)
 {
-  uintptr_t ktos;
   int rc;
   unsigned int cpu;
 
   assert(getcpu(&cpu, NULL)==0);
   
-  if (!resolve_sym("cpu_current_top_of_stack", (void **)&ktos)) {
-    printf("failed to resolve cpu_current_top_of_stack\n");
-    assert(0);
-  }
-
   if (acquire) {
-    SYM_ON_KERN_STACK_DYNSYM_DO(ktos, 
+    SYM_ON_KERN_STACK_DYNSYM_DO(ktos(), 
 				rc=acquire_exclusive_cpu(cpu,EVAC_KILL_NICELY));
     printf("acquire_exclusive_cpu: %d\n", rc);
   } else {
-    SYM_ON_KERN_STACK_DYNSYM_DO(ktos, 
+    SYM_ON_KERN_STACK_DYNSYM_DO(ktos(), 
 				release_exclusive_cpu(cpu));
     printf("release_exclusive_cpu:\n");
   }
@@ -126,8 +190,9 @@ typedef struct {
 } thread_arg_t;
 
 
-void threadfn(thread_arg_t* argptr)
+void *threadfn(void *arg)
 {
+  thread_arg_t* argptr = arg;
   int mypid = current_pid();
   if (argptr->arg % 100 == 0) {
     printf("\t\t\tthreadfn: in thread with arg=%u pid=%d\n", argptr->arg, mypid);
@@ -150,6 +215,7 @@ void threadfn(thread_arg_t* argptr)
   pthread_barrier_wait(&barrier);
   
   free(argptr);
+  return NULL;
 }
 
 // external kernel symbol forward declarations
@@ -157,6 +223,11 @@ void threadfn(thread_arg_t* argptr)
 extern int overflowuid;
 extern int __x64_sys_sched_yield(void);
 extern int _printk(const char *fmt, ...);
+
+void cleanup()
+{
+  unpinstack();
+}
 
 int main(int argc, char **argv) {
   pid_t mypid = getpid();
@@ -166,7 +237,16 @@ int main(int argc, char **argv) {
   int evac=1;
   volatile void * _printk_ptr;
   unsigned num_forks = 1000, num_spawns = 1000, num_increments = 1000;
+
+  atexit(cleanup);
   
+  walkstack();
+  stackaddrs();
+  pinstack();
+  walkstack();
+  
+  exit(0);
+
   _printk_ptr = (void *)_printk;
   if (argc > 1) ssec     = atoi(argv[1]);
   if (argc > 2) bloop    = atol(argv[2]);
@@ -246,8 +326,8 @@ int main(int argc, char **argv) {
   for (unsigned i=0; i<num_forks; i++) {
     pid_t cpid = fork();
     if (cpid==0) {
-      if (i % 100 == 0) printf("\t\t%d: %lx: FORK TEST: in child at iteration %lu\n", mypid, cr3, i);
-      int mypid = current_pid(); //indirect elevate test: current_pid() is a kernel extension symbol that will only work if we are properly elevated in the child after fork
+      if (i % 100 == 0) printf("\t\t%d: %lx: FORK TEST: in child at iteration %u\n", mypid, cr3, i);
+      //      int mypid = current_pid(); //indirect elevate test: current_pid() is a kernel extension symbol that will only work if we are properly elevated in the child after fork
       stacktouch();
       exit(0);
     } else if (cpid<0) {
@@ -257,7 +337,7 @@ int main(int argc, char **argv) {
   }
   printf("\t\t%d: %lx: FORK TEST: END\n", mypid , cr3);
 
-  printf("\t\t%d: %lx: PTHREAD TEST: spawning %lu times with stack touches\n", mypid, cr3, num_spawns);
+  printf("\t\t%d: %lx: PTHREAD TEST: spawning %u times with stack touches\n", mypid, cr3, num_spawns);
   if (num_spawns) {
     pthread_barrier_init(&barrier, NULL, num_spawns);
     
@@ -267,9 +347,9 @@ int main(int argc, char **argv) {
       thread_arg_t* argptr = malloc(sizeof(thread_arg_t));
       argptr->arg = i;
       argptr->num_increments = num_increments;
-      int rc = pthread_create(&threads[i], NULL, (void *(*)(void *))threadfn, (void *)argptr);
+      int rc = pthread_create(&threads[i], NULL, threadfn, (void *)argptr);
       if (rc) {
-        printf("\t\t%d: %lx: PTHREAD TEST: pthread_create failed at iteration %lu with rc=%d\n", mypid, cr3, i, rc);
+        printf("\t\t%d: %lx: PTHREAD TEST: pthread_create failed at iteration %u with rc=%d\n", mypid, cr3, i, rc);
         break;
       }
     }
@@ -277,7 +357,7 @@ int main(int argc, char **argv) {
     for (unsigned i=0; i<num_spawns; i++) {
       int rc = pthread_join(threads[i], NULL);
       if (rc) {
-        printf("\t\t%d: %lx: PTHREAD TEST: pthread_join failed at iteration %lu with rc=%d\n", mypid, cr3, i, rc);
+        printf("\t\t%d: %lx: PTHREAD TEST: pthread_join failed at iteration %u with rc=%d\n", mypid, cr3, i, rc);
         break;
       }
     }

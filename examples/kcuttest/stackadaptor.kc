@@ -1,0 +1,128 @@
+#include <linux/mm.h>
+#include <linux/pagewalk.h>
+
+#include "stackadaptor.kh"
+
+static struct page **sa_pages = NULL;
+static unsigned long sa_nr_pages = 0;
+
+void sa_stack_addrs(unsigned long *start, unsigned long *end)
+{
+    struct vm_area_struct *vma;
+    struct mm_struct *mm = current->mm;
+    
+    *start = *end = 0;
+    if (!mm) return;
+    
+    mmap_read_lock(mm);
+    vma = find_vma(mm, mm->start_stack);
+    if ((vma->vm_flags & VM_GROWSDOWN) &&
+	(vma && vma->vm_start <= mm->start_stack)) {
+        *start = vma->vm_start;
+        *end = vma->vm_end;
+    }
+    mmap_read_unlock(mm);
+}
+
+
+long sa_stack_pin(void)
+{
+  long nr;
+  unsigned long start, end, len;
+
+  if (sa_pages) {
+    pr_warn("%s: Stack already pinned\n", __func__);
+    return -EBUSY;
+  }
+
+  // Given that the world (address space) could change out from under us
+  // the following could fail -- eg. we get the stack region
+  // and then by the time we go to pin it has changed.
+  // We are not handling:
+  //    Rather we will simply error back to the caller and let them retry
+  sa_stack_addrs(&start, &end);
+  if (start == 0 || end == 0 || start >= end) return -EINVAL;
+  
+  len = end - start;
+  sa_nr_pages = len / PAGE_SIZE;
+  if (sa_nr_pages * PAGE_SIZE != len) {
+    pr_warn("%s: sa_nr_pages(%lu) * PAGE_SIZE != len(%lu)\n",
+	    __func__, sa_nr_pages, len);
+  }
+
+  sa_pages = kmalloc_array(sa_nr_pages, sizeof(struct page *), 
+			   GFP_KERNEL);
+  
+  // FOLL_FORCE: ignore permissions
+  // FOLL_WRITE: ensure pages are writable
+  // FOLL_LONGTERM: long-term pinning
+  // unlocked meaning we don't hold the locks when calling
+  nr = pin_user_pages_unlocked(start, sa_nr_pages, sa_pages,
+			       FOLL_FORCE | FOLL_WRITE | FOLL_LONGTERM);
+
+  if (nr != sa_nr_pages) {
+    pr_warn("%s: Failed to pin all of stack: %ld/%lu pages...unpinnig\n",
+	    __func__, nr, sa_nr_pages);
+    unpin_user_pages(sa_pages, nr);
+    sa_pages    = NULL;
+    sa_nr_pages = 0; 
+    return -EAGAIN;
+  }
+
+  pr_info("%s: pinned stack: 0x%lx 0x%lx (%lu pages)\n", __func__, start, end, sa_nr_pages);
+  return nr;
+}
+
+void sa_stack_unpin(void)
+{
+  if (!sa_pages) {
+    pr_warn("%s: No pages to unpin\n", __func__);
+    return;
+  }
+  
+  pr_info("%s: Unpinning %lu pages\n", __func__, sa_nr_pages);
+  unpin_user_pages(sa_pages, sa_nr_pages);
+  kfree(sa_pages);
+  sa_pages    = NULL;
+  sa_nr_pages = 0;
+}
+
+struct sa_pte_context {
+  struct page **pages;
+  unsigned long nr_pages;
+  unsigned long page_idx;
+  long nr_present;
+};
+
+// Page table walk callback to find which pages are actually present
+static int sa_pte_callback(pte_t *pte, unsigned long addr, void *data)
+{
+  struct sa_pte_context *ctx = data;
+  
+  if (pte_present(*pte)) {
+    ctx->nr_present++;
+    pr_info("sa_stack_walk: Address 0x%lx: present, PFN=0x%lx\n",
+	    addr, pte_pfn(*pte));
+  } else {
+    pr_info("sa_stack_walk: Address 0x%lx: NOT present (will be faulted)\n", addr);
+  }
+  
+  return 0;
+}
+
+// Walk page tables before pinning
+long sa_stack_walk(void)
+{
+  unsigned long start, end;
+  struct sa_pte_context ctx = {0};
+
+  sa_stack_addrs(&start, &end);
+  if (start == 0 || end == 0 || start >= end) return -EINVAL;
+
+  pr_info("%s: Walking stack page tables: 0x%lx - 0x%lx\n", __func__, start, end);
+    
+  mmap_read_lock(current->mm);
+  apply_to_page_range(current->mm, start, end-start, sa_pte_callback,  &ctx);
+  mmap_read_unlock(current->mm);
+  return ctx.nr_present;
+}

@@ -35,3 +35,7 @@ echo $LD_LIBRARY_PATH
 sync; sync; sync; sudo LD_LIBRARY_PATH=$LD_LIBRARY_PATH ./main $@
 #sudo systemctl default
 
+(( BGWRK )) && {
+  echo "killing $bgpid"
+  kill -9 $bgpid
+}
