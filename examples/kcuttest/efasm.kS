@@ -20,22 +20,18 @@ ef_isr_tgt_x:
 ef_common_hdlr:
 	jmp ef_common_hdlr
 
-	
+	// switched to using a table to avoid code patching
 #define ef_isr(i)	 			\
 	.global ef_adaptor_isr_##i	;	\
 	.align 32			;	\
 ef_adaptor_isr_##i:			;	\
 	subq $8, %rsp			;	\
 	push %rdi			;	\
-	mov 1f(%rip), %rdi ;	\
+	movq ef_adaptor_orig_isrs + ##i(%rip), %rdi ;	\
 	movq %rdi, 8(%rsp)		;	\
 	pop  %rdi			;	\
-	jmp ef_common_hdlr		;	\
-	.align 8			;	\
-ef_adaptor_isr_patch_##i:               ;       \
-1:					;	\
-	.quad 0
-
+	jmp ef_common_hdlr
+	
 	.text
 	.global ef_adaptor_isrs
 	.align 32
@@ -296,8 +292,7 @@ ef_adaptor_isrs:
 	ef_isr(253)
 	ef_isr(254)
 	ef_isr(255)
-	
+
 	.global ef_adaptor_isr_len
 	.equ ef_adaptor_isr_len, ef_adaptor_isr_1 - ef_adaptor_isr_0
-	.global ef_adaptor_isr_patch_offset
-	.set ef_adaptor_isr_patch_offset, ef_adaptor_isr_patch_0 - ef_adaptor_isr_0
+
