@@ -1,5 +1,8 @@
 #include <generated/asm-offsets.h>
 #include <asm/percpu.h>
+#include <asm/asm.h>
+#include <asm/nospec-branch.h>
+// #include <asm/processor.h>
 	// HW ERROR CODE is last item pushed on to stack by exception logic
 	// bits are defined as follows for pagefault exception-- from intel manual
 	.equ ERRCODE_PF_PROT,  1<<0
@@ -127,6 +130,8 @@ pf_adaptor_asm_fix_err_code_gp:
 
 
 
+
+
 	.text
 	.align 16
 	.global pf_adaptor_asm_fix_ist_err_code
@@ -138,7 +143,7 @@ pf_adaptor_asm_fix_ist_err_code:
 
 	pushq %rdi
 
-	movq 0x28(%rsp), %rdi //faulting stack pointer from exception frame // validated
+	movq 0x30(%rsp), %rdi //faulting stack pointer from exception frame
 	pushq %rsi
 	pushq %rcx
 	
@@ -152,13 +157,15 @@ pf_adaptor_asm_fix_ist_err_code:
 	js .Lerr_c_no_swapgs //if gsbase is negative, then we were elevated
 	
 	swapgs //swapgs was not a kernel address, so we need to swap it
-	// movq PER_CPU_VAR(cpu_current_top_of_stack), %rdi
+	lea cpu_tss_rw(%rip), %rdi
+	movq %gs:TSS_sp0(%rdi), %rdi
 	swapgs //restore original gsbase
 
 	jmp .Lerr_c_skip_set_dest
 
 .Lerr_c_no_swapgs:
-	// movq PER_CPU_VAR(cpu_current_top_of_stack), %rdi
+	lea cpu_tss_rw(%rip), %rdi
+	movq %gs:TSS_sp0(%rdi), %rdi
 
 	//page fault handler specific: if we're elevated, we need to modify the error code
 	movq %gs:current_task(%rip), %rsi 
@@ -167,26 +174,29 @@ pf_adaptor_asm_fix_ist_err_code:
 
 	jz  .Lerr_c_skip_flag_set
 
-	orl   $(ERRCODE_PF_USER|ERRCODE_PF_WRITE), 18(%rsp)
+	orl   $(ERRCODE_PF_USER|ERRCODE_PF_WRITE), 0x20(%rsp)
 
 .Lerr_c_skip_flag_set:
 .Lerr_c_skip_set_dest:
 .Lerr_c_copy_frame_to_dest:
 
-	subq $0x40, %rdi //point to start of exception frame on IST stack
+	subq $0x50, %rdi //point to start of exception frame on IST stack
 	movq %rsp, %rsi //source is current stack pointer
-	movq $9, %rcx //6 quads for exception frame + 3 for registers we push at the start of this function
+	movq $10, %rcx //6 quads for exception frame + 1 ret addr + 3 for registers we push at the start of this function
 	rep movsq
 
 	//rdi now points to the bottom of the copied exception frame
-	lea -0x48(%rdi), %rsp //switch to new stack before we pop registers and jump to common handler
+	lea -0x50(%rdi), %rsp //switch to new stack before we pop registers and jump to common handler
 
 	popq %rdi
 	popq %rsi
 	popq %rcx
-	jmp   *pf_adaptor_asm_exc_page_fault
+	retq
 	// int3 to satifiy objtool desire for a trap after a speculative jump to try and improve security
 	int3
+
+
+
 
 
 
@@ -197,6 +207,7 @@ pf_adaptor_asm_fix_ist_err_code:
 	.align 16
 	.global pf_adaptor_asm_fix_ist_no_err_code
 pf_adaptor_asm_fix_ist_no_err_code:
+	ENDBR
 	// This will be executed on an IST stack
 	// we copy the exception frame from the IST stack to the regular kernel stack
 	// if we faulted on a user stack we use tss.rsp0
@@ -204,7 +215,7 @@ pf_adaptor_asm_fix_ist_no_err_code:
 
 	pushq %rdi
 
-	movq 0x20(%rsp), %rdi //faulting stack pointer from exception frame // validated
+	movq 0x28(%rsp), %rdi //faulting stack pointer from exception frame // validated
 	pushq %rsi
 	pushq %rcx
 	
@@ -227,18 +238,18 @@ pf_adaptor_asm_fix_ist_no_err_code:
 
 .Lno_err_c_skip_set_dest:
 .Lno_err_c_copy_frame_to_dest:
-	subq $0x38, %rdi //point to start of exception frame on IST stack
+	subq $0x48, %rdi //point to start of exception frame on IST stack
 
 	movq %rsp, %rsi //source is current stack pointer
-	movq $8, %rcx //6 quads for exception frame + 3 for registers we push at the start of this function
+	movq $9, %rcx //6 quads for exception frame + 3 for registers we push at the start of this function
 	rep movsq
 
 	//rdi now points to the bottom of the copied exception frame
-	lea -0x40(%rdi), %rsp //switch to new stack before we pop registers and jump to common handler
+	lea -0x48(%rdi), %rsp //switch to new stack before we pop registers and jump to common handler
 
 	popq %rdi
 	popq %rsi
 	popq %rcx
-	jmp   *pf_adaptor_asm_exc_page_fault
+	retq
 	// int3 to satifiy objtool desire for a trap after a speculative jump to try and improve security
 	int3
