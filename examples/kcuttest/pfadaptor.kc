@@ -23,23 +23,6 @@ unsigned long int pf_adaptor_gp_cnt_get() { return pf_adaptor_gp_cnt; }
 
 void print_idt_entries(void);
 
-// think about moving these two to idt_adaptor.kh
-static inline void
-read_gate(gate_desc *idt, int n, gate_desc *gate)
-{
-  write_idt_entry(gate, 0, &(idt[n])); 
-}
-
-static inline void
-gate_set_offset(gate_desc *gate, unsigned long addr)
-{
-  gate->offset_low      = (u16) addr;
-  gate->offset_middle   = (u16) (addr >> 16);
-#ifdef CONFIG_X86_64
-  gate->offset_high     = (u32) (addr >> 32);
-#endif
-}
-
 unsigned long pf_adaptor_asm_exc_page_fault = 0;
 unsigned long pf_adaptor_asm_exc_double_fault = 0;
 unsigned long pf_adaptor_asm_exc_general_protection = 0;

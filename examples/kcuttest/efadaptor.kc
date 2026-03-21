@@ -1,0 +1,94 @@
+/* This adaptor creates and installs a idt that directs all the
+   vectors configured to use task state segment (TSS) rsp0 to instead
+   use TSS IST7 which we configure to be a dedicated exception frame
+   stack.  This way when any of these exceptions occur the hardware
+   will always switch to this stack and spill the exception frame.
+
+   We then use a special software handler on these exceptions that
+   determines what stack to use and transfers the exception frame
+   there to continue processing */
+#include <linux/percpu.h>
+#include <asm/processor.h>
+
+#include "idtadaptor.h"
+#include "efadaptor.kh"
+
+#define IST_INDEX_EF 6
+
+extern unsigned char ef_adaptor_isr_len[];
+extern unsigned char ef_adaptor_isr_patch_offset[];
+extern unsigned long ef_adaptor_isrs[];
+
+long
+ef_adaptor_per_cpu_init(void)
+{
+  // create a new IDT and point vectors to use
+  int cpu = smp_processor_id();
+  gate_desc * idt;
+  gate_desc   gate;
+  unsigned long hdlr;
+  int vec; 
+  int dirty = 0;
+  unsigned long isr_len = (unsigned long)&ef_adaptor_isr_len;
+  unsigned long isr_patch_off = (unsigned long)&ef_adaptor_isr_patch_offset;
+  unsigned long isrs = (unsigned long)&ef_adaptor_isrs;
+  
+  pr_info("%s: CPU %d: isr_len=%lu isr_patch_off=%lu isrs=%lx\n", __func__, cpu,
+	  isr_len, isr_patch_off, isrs);
+  
+#if 0
+  unsigned long efstack = NULL;
+  struct tss_struct *tss = NULL;
+
+  // GFP_KERNEL   Normal kernel allocation, can sleep
+  // __GFP_ZERO   Zero pages
+  efstack = __get_free_pages(GFP_KERNEL | __GFP_ZERO, 0);
+  if (stack == 0 ) {
+    pr_err("%s: CPU %d: failed to allocate memory\n", __func__, cpu);
+    return -ENOMEM;
+  }
+  // istall in to tss for IST_INDEX_EF (IST7)
+  tss = this_cpu_ptr(&cpu_tss_rw);
+  tss->x86_tss.ist[IST_INDEX_EF] = efstack + PAGE_SIZE;  // set to top
+
+  pr_info("%s: CPU %d: IST7 (ist index %d) stack at %lx, top=%lx\n", __func__, cpu,
+	  IST_INDEX_EF, efstack, stack + PAGE_SIZE);
+#endif
+
+  idt = idt_adaptor_clone();
+  // so that we only modify the fields we care about we read the entire gate
+  // update the fields we care about and write it back to the table.
+  for (vec=0; vec<IDT_ENTRIES; vec++) {
+    read_gate(idt, vec, &gate);
+    hdlr = gate_offset(&gate);
+    pr_info("%s: CPU %d: procesing gate: %d: handler=%lx IST=%d type=%d dpl=%d p=%d\n", __func__, cpu,
+	    vec, hdlr, gate.bits.ist, gate.bits.type, gate.bits.dpl, gate.bits.p);
+    // not sure if we should skip the non present gates
+    // we will also need to think about what to do if some installs a new
+    // entry but not today's problem
+    if (!gate.bits.p) {
+      pr_info("%s:   CPU %d: IDT gate %d not present skipping\n", __func__, cpu, vec);
+      continue;
+    }
+    // value zero is reseved as don't use an ist stack
+    if (gate.bits.ist != 0) {
+      pr_info("%s:   CPU %d: IDT gate %d already using and IST: %d skipping\n", __func__, cpu, vec, gate.bits.ist);
+      continue;
+    }
+    gate.bits.ist = IST_INDEX_EF + 1; // note must add one to index!!! 
+    pr_info("%s:     CPU %d: IDT gate %d SET to use IST: %d\n", __func__, cpu, vec, gate.bits.ist);
+    write_idt_entry(idt, vec, &gate);
+    //      dirty++;
+  }
+
+  if (dirty) {
+    idt_adaptor_activate(idt);
+    pr_info("%s: CPU %d: updated %d idt entries ACTIVATED new idt\n", __func__, cpu, dirty);
+  } else {
+    idt_adaptor_release(idt);
+    pr_info("%s: CPU %d: updated %d idt entries RELEASE new idt\n", __func__, cpu, dirty);
+  }
+
+  return dirty;
+}
+
