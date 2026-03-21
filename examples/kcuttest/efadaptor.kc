@@ -33,65 +33,111 @@ unsigned long ef_adaptor_orig_isrs[IDT_ENTRIES] = {0};
 #define VINFO(...)
 #endif
 
+
+static __attribute__((used)) void ef_adaptor_tsthdlr(void *rsp)
+{
+    pr_info("Handler running on IST7 stack! rsp=%lx\n", (unsigned long)rsp);
+    // Handle your interrupt/exception
+}
+
+// Assembly wrapper (needed for proper entry)
+asm(
+"   .global ef_adaptor_tsthdlr_asm\n"
+"ef_adaptor_tsthdlr_asm:\n"
+"   pushq %rdi\n"
+"   movq  %rsp, %rdi\n"	
+"   call ef_adaptor_tsthdlr\n"
+"   pop  %rdi\n"
+"   addq $8, %rsp\n"	
+"   iretq\n"
+);
+
+extern void ef_adaptor_tsthdlr_asm(void);
+
 long
-ef_adaptor_per_cpu_init(void)
+ef_adaptor_per_cpu_init(int vstart, int vend, int tsthdlr)
 {
   // create a new IDT and point vectors to use
-  int cpu = smp_processor_id();
-  gate_desc * idt = NULL;
+  int cpu                = smp_processor_id();
+  unsigned long efstack  = 0;
+  struct tss_struct *tss = NULL;
+  gate_desc * idt        = NULL;
+  int dirty              = 0;
+  int rc                 = 0;
+  unsigned long isr_len  = (unsigned long)&ef_adaptor_isr_len;
+  unsigned char *isrs    = (unsigned char *)&ef_adaptor_isrs;
   gate_desc   gate;
   unsigned long hdlr;
-  int vec; 
-  int dirty = 0;
-  unsigned long isr_len = (unsigned long)&ef_adaptor_isr_len;
-  unsigned char *isrs = (unsigned char *)&ef_adaptor_isrs;
 
-  pr_info("%s: CPU %d: isr_len=%lu isrs=%lx\n", __func__, cpu,
-	  isr_len, (unsigned long)isrs);
-  
-#if 0
-  unsigned long efstack = NULL;
-  struct tss_struct *tss = NULL;
-
-  // GFP_KERNEL   Normal kernel allocation, can sleep
-  // __GFP_ZERO   Zero pages
-  efstack = __get_free_pages(GFP_KERNEL | __GFP_ZERO, 0);
-  if (stack == 0 ) {
-    pr_err("%s: CPU %d: failed to allocate memory\n", __func__, cpu);
-    return -ENOMEM;
-  }
-  // istall in to tss for IST_INDEX_EF (IST7)
   tss = this_cpu_ptr(&cpu_tss_rw);
-  tss->x86_tss.ist[IST_INDEX_EF] = efstack + PAGE_SIZE;  // set to top
+  if (tss->x86_tss.ist[IST_INDEX_EF] == 0) {
+    // GFP_KERNEL   Normal kernel allocation, can sleep
+    // __GFP_ZERO   Zero pages
+    // order is 0 --> 1 Page
+    efstack = __get_free_pages(GFP_KERNEL | __GFP_ZERO, 0);
+    if (efstack == 0 ) {
+      pr_err("%s: CPU %d: failed to allocate memory\n", __func__, cpu);
+      rc = -ENOMEM;
+      goto error;
+    }
+    
+    // install in to tss for IST_INDEX_EF (IST7)
+    tss->x86_tss.ist[IST_INDEX_EF] = efstack + PAGE_SIZE;  // set to top
+  } else {
+    pr_warn("%s: CPU %d: tss.ist[%d] already set: %llx\n", __func__, cpu,
+	    IST_INDEX_EF, tss->x86_tss.ist[IST_INDEX_EF]);
+  }
 
-  pr_info("%s: CPU %d: IST7 (ist index %d) stack at %lx, top=%lx\n", __func__, cpu,
-	  IST_INDEX_EF, efstack, stack + PAGE_SIZE);
-#endif
+  VINFO("%s: CPU %d: IST7 (ist index %d) stack top=%llx\n", __func__, cpu,
+	IST_INDEX_EF, tss->x86_tss.ist[IST_INDEX_EF]);
 
+  VINFO("%s: CPU %d: isr_len=%lu isrs=%lx\n", __func__, cpu,
+	isr_len, (unsigned long)isrs);
+
+  // setup a new idt that uses IST7 for the non-ist in the range
   idt = idt_adaptor_clone();
   // so that we only modify the fields we care about we read the entire gate
   // update the fields we care about and write it back to the table.
-  for (vec=0; vec<IDT_ENTRIES; vec++) {
+  for (int vec=vstart; vec<vend; vec++) {
     read_gate(idt, vec, &gate);
-    hdlr = gate_offset(&gate);
-    pr_info("%s: CPU %d: procesing gate: %d: handler=%lx IST=%d type=%d dpl=%d p=%d\n", __func__, cpu,
-	    vec, hdlr, gate.bits.ist, gate.bits.type, gate.bits.dpl, gate.bits.p);
-    // not sure if we should skip the non present gates
-    // we will also need to think about what to do if some installs a new
-    // entry but not today's problem
-    if (!gate.bits.p) {
-      pr_info("%s:   CPU %d: IDT gate %d not present skipping\n", __func__, cpu, vec);
-      continue;
+    pr_info("%s: CPU %d: procesing gate: %d: hdlr=%lx IST=%d typ=%d dpl=%d p=%d\n",
+	    __func__, cpu,vec, hdlr, gate.bits.ist,
+	    gate.bits.type, gate.bits.dpl, gate.bits.p);
+
+    // for the moment we are not skipping non-present entries but
+    // we will need to think about what happens when some install a new 
+    // interrupt handler and if this our ist setting will persist
+    // but not today's problem
+    
+    if (gate.bits.p != 0 && tsthdlr) {
+      // if we have been direct to install the test handler
+      // then for all non-present entires we pretented the test
+      // handler was already installed
+      gate.segment      = __KERNEL_CS;
+      gate.bits.type    = GATE_INTERRUPT;
+      gate.bits.ist     = 0;   // will be set correctly lower down
+      gate.bits.dpl     = 3;
+      gate.bits.p       = 1;
+      gate.reserved     = 0;
+      gate_set_offset(&gate, (unsigned long)ef_adaptor_tsthdlr_asm);	
+      VINFO("%s:   CPU %d: IDT gate %d INSTALLING test handler\n",
+	    __func__, cpu, vec);
     }
+
+    // grab original handler this might be the test handler if it was
+    // set above
+    hdlr = gate_offset(&gate);
+    
     // value zero is reseved as don't use an ist stack
     if (gate.bits.ist != 0) {
-      pr_info("%s:   CPU %d: IDT gate %d already using and IST: %d skipping\n", __func__, cpu, vec, gate.bits.ist);
+      VINFO("%s:   CPU %d: IDT gate %d already using and IST: %d skipping\n",
+	    __func__, cpu, vec, gate.bits.ist);
       continue;
     }
     gate.bits.ist = IST_INDEX_EF + 1; // note must add one to index!!! 
 
     // record vector's original handler that runs on rsp0
-    unsigned long expected = 0;
+    unsigned long expected  = 0;
     unsigned long savedhdlr = cmpxchg(&ef_adaptor_orig_isrs[vec], expected, hdlr);
     if (savedhdlr != 0 && savedhdlr != hdlr) {
       // MISMATCH! Different CPUs have different handlers
@@ -102,32 +148,40 @@ ef_adaptor_per_cpu_init(void)
       break;
     }
     
-    pr_info("%s:     CPU %d: IDT gate %d saved %lx new handler %lx\n", __func__,
-	    cpu, vec, hdlr, (unsigned long)&isrs[isr_len*vec]);
-    
+    VINFO("%s:     CPU %d: IDT gate %d saved %lx new handler %lx\n", __func__,
+	  cpu, vec, hdlr, (unsigned long)&isrs[isr_len*vec]);
+
     // update gate to point to new ef vector specific isr
     hdlr = (unsigned long)&(isrs[(isr_len*vec)]);		    
-    gate_set_offset(&gate, hdlr);		    
+    gate_set_offset(&gate, hdlr);
+
     write_idt_entry(idt, vec, &gate);
     
-    pr_info("%s:     CPU %d: IDT gate: %d SET to handler=%lx IST=%d type=%d dpl=%d p=%d\n", __func__, cpu,
-	    vec, hdlr, gate.bits.ist, gate.bits.type, gate.bits.dpl, gate.bits.p);
-        
-    //      dirty++;
+    VINFO("%s:     CPU %d: IDT gate: %d SET to hdlr=%lx IST=%d typ=%d dpl=%d p=%d\n",
+	  __func__, cpu, vec, hdlr, gate.bits.ist, gate.bits.type,
+	  gate.bits.dpl, gate.bits.p);    
+    dirty++;
   }
 
   if (dirty) {
     idt_adaptor_activate(idt);
-    pr_info("%s: CPU %d: updated %d idt entries ACTIVATED new idt\n", __func__, cpu, dirty);
+    VINFO("%s: CPU %d: updated %d idt entries ACTIVATED new idt\n", __func__, cpu,
+	  dirty);
   } else {
     idt_adaptor_release(idt);
-    pr_info("%s: CPU %d: updated %d idt entries RELEASE new idt\n", __func__, cpu, dirty);
+    VINFO("%s: CPU %d: updated %d idt entries RELEASE new idt\n", __func__, cpu,
+	  dirty);
   }
-
+  // even if we did not set any idt entries to our new ist stack we leave it in
+  // place on IST7 we only remove it if there was an error
   return dirty;
  error:
-  pr_err("%s: CPU: %d: ERROR FAILED: freeing resources and releasing new idt\n", __func__, cpu);
-  //	 add tss and estack error cleanup
+  pr_err("%s: CPU: %d: ERROR FAILED: freeing resources and releasing new idt\n",
+	 __func__, cpu);
+  if (efstack) {
+    tss->x86_tss.ist[IST_INDEX_EF] = 0;
+    free_pages(efstack, 0);
+  }
   if (idt) idt_adaptor_release(idt);
   return -EINVAL;
 }

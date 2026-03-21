@@ -1,6 +1,6 @@
 #ifndef __EF_ADAPTOR_H__
 #define  __EF_ADAPTOR_H__
 
-long ef_adaptor_per_cpu_init(void);
+long ef_adaptor_per_cpu_init(int vstart, int vend, int tsthdlr);
 
 #endif //  __EF_ADAPTOR_H__

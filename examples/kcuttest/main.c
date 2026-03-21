@@ -213,9 +213,11 @@ int main(int argc, char **argv) {
 
   long rc;
   SYM_ON_KERN_STACK_DYNSYM_DO(ktos(), 
-			      rc=ef_adaptor_per_cpu_init());
+			      rc=ef_adaptor_per_cpu_init(0xE0, 0xE1, 1));
   printf("\t%d: ef_adaptor_per_cpu_init() rc=%ld\n", mypid, rc);
 
+  asm volatile ("int $0xE0\n");
+  
   exit(0);
   
   if (evac) evacuate(1);
