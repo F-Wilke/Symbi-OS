@@ -38,32 +38,44 @@ unsigned long ef_adaptor_orig_isrs[IDT_ENTRIES] = {0};
 #endif
 
 #define NR_TSTHDLR_DATA 5
-unsigned long ef_adaptor_tsthdlr_data[NR_TSTHDLR_DATA] = {0};
+static DEFINE_PER_CPU(unsigned long[NR_TSTHDLR_DATA],ef_adaptor_tsthdlr_data);
+
 
 void ef_adaptor_print_tsthdlr_data(void)
 {
+  unsigned long *data;	
+  int cpu = smp_processor_id();
+  
+  data = (unsigned long *)this_cpu_ptr(&ef_adaptor_tsthdlr_data);
+  pr_info("%s: CPU %d: dumping ef_adaptor_tsthdlr_data\n", __func__, cpu); 
   for (int i=0; i<NR_TSTHDLR_DATA; i++) {      
-    pr_info("%s: ef_adaptor_print_tsthdlr_data[%d]=%08lx\n",
-	    __func__, i, ef_adaptor_print_tsthdlr_data[i]);
+    pr_info("%s: CPU %d:   ef_adaptor_print_tsthdlr_data[%d]=%016lx\n",
+	    __func__, cpu, i, ef_adaptor_tsthdlr_data[i]);
   }
 }
 
 static __attribute__((used)) void ef_adaptor_tsthdlr(unsigned long *rsp)
 {
+  unsigned long *data;
+  
+  data = (unsigned long *)this_cpu_ptr(&ef_adaptor_tsthdlr_data);
   for (int i=0; i<NR_TSTHDLR_DATA; i++) {
-    ef_adaptor_tsthdlr_data[i] = rsp[i];
+    // skip first rsp value which is the rdi pushed by asm code below
+    data[i] = rsp[i+1];
   }
 }
 
-// Assembly wrapper (needed for proper entry)
+// Assembly wrapper (needed for call to test C handler"
+// swapgs so that per-cpu kernel code is safe
 asm(
 "   .global ef_adaptor_tsthdlr_asm\n"
 "ef_adaptor_tsthdlr_asm:\n"
+"   swapgs\n"
 "   pushq %rdi\n"
 "   movq  %rsp, %rdi\n"	
 "   call ef_adaptor_tsthdlr\n"
 "   pop  %rdi\n"
-"   addq $8, %rsp\n"	
+"   swapgs\n"
 "   iretq\n"
 );
 
