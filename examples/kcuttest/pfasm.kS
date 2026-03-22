@@ -130,6 +130,13 @@ pf_adaptor_asm_fix_err_code_gp:
 
 
 
+	.text
+	.align 16
+	.global pf_adaptor_asm_fix_ist_err_code_stack_swing
+pf_adaptor_asm_fix_ist_err_code_stack_swing:
+	ENDBR
+	movq new_rsp(%rip), %rsp
+
 
 
 	.text
@@ -140,6 +147,8 @@ pf_adaptor_asm_fix_ist_err_code:
 	// we copy the exception frame from the IST stack to the regular kernel stack
 	// if we faulted on a user stack we use tss.rsp0
 	// if we faulted on a kernel stack we use the stack pointer from the exception frame
+	testq $0x8, %rsp
+	jz pf_adaptor_asm_fix_ist_no_err_code
 
 	pushq %rdi
 
@@ -167,6 +176,7 @@ pf_adaptor_asm_fix_ist_err_code:
 	lea cpu_tss_rw(%rip), %rdi
 	movq %gs:TSS_sp0(%rdi), %rdi
 
+.Lerr_c_skip_set_dest:
 	//page fault handler specific: if we're elevated, we need to modify the error code
 	movq %gs:current_task(%rip), %rsi 
 
@@ -174,10 +184,9 @@ pf_adaptor_asm_fix_ist_err_code:
 
 	jz  .Lerr_c_skip_flag_set
 
-	orl   $(ERRCODE_PF_USER|ERRCODE_PF_WRITE), 0x20(%rsp)
+	orl   $(ERRCODE_PF_USER), 0x20(%rsp)
 
 .Lerr_c_skip_flag_set:
-.Lerr_c_skip_set_dest:
 .Lerr_c_copy_frame_to_dest:
 
 	subq $0x50, %rdi //point to start of exception frame on IST stack
@@ -188,9 +197,9 @@ pf_adaptor_asm_fix_ist_err_code:
 	//rdi now points to the bottom of the copied exception frame
 	lea -0x50(%rdi), %rsp //switch to new stack before we pop registers and jump to common handler
 
-	popq %rdi
-	popq %rsi
 	popq %rcx
+	popq %rsi
+	popq %rdi
 	retq
 	// int3 to satifiy objtool desire for a trap after a speculative jump to try and improve security
 	int3
@@ -205,9 +214,15 @@ pf_adaptor_asm_fix_ist_err_code:
 
 	.text
 	.align 16
+	.global pf_adaptor_asm_fix_ist_no_err_code_stack_swing
+pf_adaptor_asm_fix_ist_no_err_code_stack_swing:
+	ENDBR
+	movq new_rsp(%rip), %rsp
+
+	.text
+	.align 16
 	.global pf_adaptor_asm_fix_ist_no_err_code
 pf_adaptor_asm_fix_ist_no_err_code:
-	ENDBR
 	// This will be executed on an IST stack
 	// we copy the exception frame from the IST stack to the regular kernel stack
 	// if we faulted on a user stack we use tss.rsp0
@@ -229,12 +244,14 @@ pf_adaptor_asm_fix_ist_no_err_code:
 	js .Lno_err_c_no_swapgs //if gsbase is negative, then we were elevated
 	
 	swapgs //swapgs was not a kernel address, so we need to swap it
-	//movq %gs:cpu_current_top_of_stack(%rip), %rdi //cpu_current_top_of_stack is currently not exported
+	lea cpu_tss_rw(%rip), %rdi
+	movq %gs:TSS_sp0(%rdi), %rdi
 	swapgs //restore original gsbase
 
 	jmp .Lno_err_c_skip_set_dest
 .Lno_err_c_no_swapgs:
-	//movq %gs:cpu_current_top_of_stack(%rip), %rdi
+	lea cpu_tss_rw(%rip), %rdi
+	movq %gs:TSS_sp0(%rdi), %rdi
 
 .Lno_err_c_skip_set_dest:
 .Lno_err_c_copy_frame_to_dest:

@@ -2,6 +2,7 @@
 #include <asm/idtentry.h>
 #include "idtadaptor.h"
 #include "pfadaptor.kh"
+#include <asm/unwind_hints.h>
 
 // from assembly code
 extern unsigned long pf_adaptor_asm_fix_err_code_u;
@@ -10,6 +11,9 @@ extern unsigned long pf_adaptor_asm_fix_err_code_gp;
 
 extern unsigned long pf_adaptor_asm_fix_ist_err_code;
 extern unsigned long pf_adaptor_asm_fix_ist_no_err_code;
+
+extern unsigned long pf_adaptor_asm_fix_ist_err_code_stack_swing;
+extern unsigned long pf_adaptor_asm_fix_ist_no_err_code_stack_swing;
 
 
 // module specfic statics
@@ -232,12 +236,14 @@ extern unsigned long ret_stub;
 
 uint64_t fake_target_stack[10];
 uint64_t fake_frame[50];
+unsigned long old_stack;
+uint64_t new_rsp;
 
 
-void test_pfasm(int arg) {
+void test_pfasm(int use_ker_stack, int include_err_code) {
   struct task_struct *cur_task = current;
-  unsigned long old_stack;
   unsigned long *ker_stack, *ist_stack, *expected_ker_stack;
+
 
   ker_stack = (unsigned long *)kmalloc(0x1000, GFP_KERNEL);
   if (!ker_stack) {
@@ -271,36 +277,44 @@ void test_pfasm(int arg) {
 
   printk("test_pfasm: adjusted ker_stack @ %lx, ist_stack @ %lx, expected_ker_stack @ %lx\n",
          (unsigned long)ker_stack, (unsigned long)ist_stack, (unsigned long)expected_ker_stack);
+  
+  int index = 0;
+  if (include_err_code)   index = -7;
+  else                    index = -6;
 
+  expected_ker_stack[index] = ist_stack[index++] = 0x0;           //handler address to ret to, later filled in
+  
+  if (include_err_code)
+    expected_ker_stack[index] = ist_stack[index++] = 0x00;           // error_code
+  
+  expected_ker_stack[index] = ist_stack[index++] = 0x12345678;     // rip (fake)
+  expected_ker_stack[index] = ist_stack[index++] = 0x10;           // cs
+  expected_ker_stack[index] = ist_stack[index++] = 0x202;          // rflags
 
-  expected_ker_stack[-7] = ist_stack[-7] = 0x0;           //handler address to ret to, later filled in
-  expected_ker_stack[-6] = ist_stack[-6] = 0x00;           // error_code
-  expected_ker_stack[-5] = ist_stack[-5] = 0x12345678;     // rip (fake)
-  expected_ker_stack[-4] = ist_stack[-4] = 0x10;           // cs
-  expected_ker_stack[-3] = ist_stack[-3] = 0x202;          // rflags
-
-  if (arg) //kernel stack (will be used)
-    expected_ker_stack[-2] = ist_stack[-2] = (uint64_t)ker_stack; // rsp (negative to trigger kernel path)
+  if (use_ker_stack) //kernel stack (will be used)
+    expected_ker_stack[index] = ist_stack[index++] = (uint64_t)ker_stack; // rsp (negative to trigger kernel path)
   else //user stack (will not be used)
-    expected_ker_stack[-2] = ist_stack[-2] = 0;   
+    expected_ker_stack[index] = ist_stack[index++] = 0;   
   
     // fake_frame[4] = 0x8000000000000000ULL; // rsp (negative to trigger kernel path)
-  expected_ker_stack[-1] = ist_stack[-1] = 0x18;           // ss
+  expected_ker_stack[index] = ist_stack[index++] = 0x18;           // ss
 
-  uint64_t new_rsp = (uint64_t)&ist_stack[-7]; // point rsp to the bottom of the fake exception frame on the IST stack
+  new_rsp = (uint64_t)&ist_stack[include_err_code ? -7 : -6]; // point rsp to the bottom of the fake exception frame on the IST stack
 
-  printk("new rsp at %lx\n", new_rsp);
   asm volatile (
     "mov %%rsp, %0\n"
     : "=r" (old_stack)
   );
-
+  
+  printk("new rsp at %lx, old %lx\n", new_rsp, old_stack);
   if (cur_task == NULL) {//this never happens but I want the label to be before its reference
   my_return:
       asm volatile (
         "mov %0, %%rsp\n"
         : : "r" (old_stack)
       );
+
+      //TODO: validate incoming stack against expected_ker_stack here
 
       printk("test_pfasm: returned from pf_adaptor_asm_fix_err_code_u\n");
       return;
@@ -309,17 +323,17 @@ void test_pfasm(int arg) {
   printk("test_pfasm: pf_adaptor_asm_fix_ist_err_code @ 0x%lx, current task @ 0x%lx\n",
 	 (unsigned long)&pf_adaptor_asm_fix_ist_err_code, (unsigned long)cur_task);
   // call the pfasm function that will trigger a page fault and return to the caller
-  // pf_adaptor_asm_exc_page_fault = (unsigned long)(&&my_return);
-  expected_ker_stack[-7] = ist_stack[-7] = (unsigned long)(&&my_return);           //handler address to ret to
+  
+  
+  if (include_err_code) {
+    expected_ker_stack[-7] = ist_stack[-7] = (unsigned long)(&&my_return);           //handler address to ret to
+  }
+  else {
+    expected_ker_stack[-6] = ist_stack[-6] = (unsigned long)(&&my_return);           //handler address to ret to
+  }
 
-      
-    
   asm volatile (
-    "push %%rbp \n"
-    "mov %%rsp, %%rbp \n"
-    "movq %0, %%rsp\n" // set rsp to 0 to trigger kernel path in pf handler
-    "jmp pf_adaptor_asm_fix_ist_err_code\n"
-    : : "r" (new_rsp) : "memory"
+    "jmp pf_adaptor_asm_fix_ist_err_code_stack_swing\n"
+    ::: "memory"
   );
-
 }

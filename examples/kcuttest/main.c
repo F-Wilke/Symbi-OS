@@ -312,11 +312,17 @@ int main(int argc, char **argv) {
   printf("\t\t%d: %lx: IST STACK BEHAVIOUR TEST: START\n", mypid, cr3);
   
   if (do_test_pfasm) {
-    test_pfasm(1);
-    printf("\t\t%d: %lx: IST STACK BEHAVIOUR TEST: Completed kernel scenario\n", mypid, cr3);
+    test_pfasm(1,1);
+    printf("\t\t%d: %lx: IST STACK BEHAVIOUR TEST: Completed kernel + err code scenario\n", mypid, cr3);
     
-    test_pfasm(0);
-    printf("\t\t%d: %lx: IST STACK BEHAVIOUR TEST: Completed user scenario\n", mypid, cr3);
+    test_pfasm(1,0);
+    printf("\t\t%d: %lx: IST STACK BEHAVIOUR TEST: Completed kernel + no err code scenario\n", mypid, cr3);
+    
+    test_pfasm(0,1);
+    printf("\t\t%d: %lx: IST STACK BEHAVIOUR TEST: Completed user + err code scenario\n", mypid, cr3);
+    
+    test_pfasm(0,0);
+    printf("\t\t%d: %lx: IST STACK BEHAVIOUR TEST: Completed user + no err code scenario\n", mypid, cr3);
   }
   
   printf("\t\t%d: %lx: IST STACK BEHAVIOUR TEST: END\n", mypid, cr3);
