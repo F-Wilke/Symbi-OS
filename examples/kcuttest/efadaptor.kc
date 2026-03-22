@@ -11,6 +11,7 @@
 #include <asm/processor.h>
 #include <linux/module.h>
 #include <asm/text-patching.h>
+#include <linux/stop_machine.h>
 
 #include "idtadaptor.h"
 #include "efadaptor.kh"
@@ -26,6 +27,7 @@ extern unsigned long ef_adaptor_isrs[];
 // so rather than hacking a text patch decide to go with a
 // jump table
 unsigned long ef_adaptor_orig_isrs[IDT_ENTRIES] = {0};
+
 
 #ifdef VERBOSE
 #define VINFO(...) pr_info(__VA_ARGS__)
@@ -54,18 +56,28 @@ asm(
 
 extern void ef_adaptor_tsthdlr_asm(void);
 
-long
-ef_adaptor_per_cpu_init(int vstart, int vend, int tsthdlr)
+struct ef_adaptor_args {
+  int svec;
+  int evec;
+  int tsthdlr;
+};
+
+static int
+ef_adaptor_per_cpu_init(void *arg)
 {
   // create a new IDT and point vectors to use
-  int cpu                = smp_processor_id();
-  unsigned long efstack  = 0;
-  struct tss_struct *tss = NULL;
-  gate_desc * idt        = NULL;
-  int dirty              = 0;
-  int rc                 = 0;
-  unsigned long isr_len  = (unsigned long)&ef_adaptor_isr_len;
-  unsigned char *isrs    = (unsigned char *)&ef_adaptor_isrs;
+  struct ef_adaptor_args *args = arg;
+  int vstart                   = args->svec;
+  int vend                     = args->evec;
+  int tsthdlr                  = args->tsthdlr;
+  int cpu                      = smp_processor_id();
+  unsigned long efstack        = 0;
+  struct tss_struct *tss       = NULL;
+  gate_desc * idt              = NULL;
+  int dirty                    = 0;
+  int rc                       = 0;
+  unsigned long isr_len        = (unsigned long)&ef_adaptor_isr_len;
+  unsigned char *isrs          = (unsigned char *)&ef_adaptor_isrs;
   gate_desc   gate;
   unsigned long hdlr;
 
@@ -118,7 +130,7 @@ ef_adaptor_per_cpu_init(int vstart, int vend, int tsthdlr)
       gate.bits.ist     = 0;   // will be set correctly lower down
       gate.bits.dpl     = 3;
       gate.bits.p       = 1;
-      gate.reserved     = 0;
+      gate.bits.zero    = 0;
       gate_set_offset(&gate, (unsigned long)ef_adaptor_tsthdlr_asm);	
       VINFO("%s:   CPU %d: IDT gate %d INSTALLING test handler\n",
 	    __func__, cpu, vec);
@@ -187,3 +199,16 @@ ef_adaptor_per_cpu_init(int vstart, int vend, int tsthdlr)
 }
 
 
+long ef_adaptor_init(int svec, int evec, int tsthdlr)
+{
+  int rc;
+  struct ef_adaptor_args args = { .svec = svec, .evec = evec, .tsthdlr = tsthdlr};
+  
+  // to be pedantic we are stopping the world to setup the idt 
+  rc = stop_machine(ef_adaptor_per_cpu_init, &args, NULL);
+
+  if (rc<0) {
+    pr_err("%s: stop_machine returned %d\n", __func__, rc);
+  }
+  return rc;
+}

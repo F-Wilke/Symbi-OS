@@ -18,8 +18,9 @@ ef_isr_tgt_x:
 	.align 16
 	.global ef_common_hdlr
 ef_common_hdlr:
-	jmp ef_common_hdlr
-
+	retq
+	int3
+	
 	// switched to using a table to avoid code patching
 #define ef_isr(i)	 			\
 	.global ef_adaptor_isr_##i	;	\
@@ -27,7 +28,7 @@ ef_common_hdlr:
 ef_adaptor_isr_##i:			;	\
 	subq $8, %rsp			;	\
 	push %rdi			;	\
-	movq ef_adaptor_orig_isrs + ##i(%rip), %rdi ;	\
+	movq ef_adaptor_orig_isrs + (##i * 8)(%rip), %rdi ;	\
 	movq %rdi, 8(%rsp)		;	\
 	pop  %rdi			;	\
 	jmp ef_common_hdlr
