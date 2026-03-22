@@ -37,11 +37,22 @@ unsigned long ef_adaptor_orig_isrs[IDT_ENTRIES] = {0};
 #define VINFO(...)
 #endif
 
+#define NR_TSTHDLR_DATA 5
+unsigned long ef_adaptor_tsthdlr_data[NR_TSTHDLR_DATA] = {0};
 
-static __attribute__((used)) void ef_adaptor_tsthdlr(void *rsp)
+void ef_adaptor_print_tsthdlr_data(void)
 {
-    pr_info("Handler running on IST7 stack! rsp=%lx\n", (unsigned long)rsp);
-    // Handle your interrupt/exception
+  for (int i=0; i<NR_TSTHDLR_DATA; i++) {      
+    pr_info("%s: ef_adaptor_print_tsthdlr_data[%d]=%08lx\n",
+	    __func__, i, ef_adaptor_print_tsthdlr_data[i]);
+  }
+}
+
+static __attribute__((used)) void ef_adaptor_tsthdlr(unsigned long *rsp)
+{
+  for (int i=0; i<NR_TSTHDLR_DATA; i++) {
+    ef_adaptor_tsthdlr_data[i] = rsp[i];
+  }
 }
 
 // Assembly wrapper (needed for proper entry)
