@@ -247,7 +247,7 @@ long ef_adaptor_init(int svec, int evec, int tsthdlr)
 int extension_init(void)
 {
   int svec = 14;
-  int evec = 14;
+  int evec = 15;
   int tsthdlr = 0; // set to one to install test handler on all non-present entries
   int ret = 0;
   pr_info("%s: Initializing with svec=%d evec=%d tsthdlr=%d\n", __func__, svec, evec, tsthdlr);

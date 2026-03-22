@@ -15,6 +15,9 @@
 	.equ ERRCODE_PF_HLAT,  1<<7
 	.equ ERRCODE_PF_SGX,   1<<15
 	
+	.equ RFLAGS_SWAPPED_GS, 1<<29
+	.equ RFLAGS_SWAPPED_GS_MASK, ~(1<<29)
+	
 	.text
 	.align 16
 	.global pf_adaptor_asm_fix_err_code_u
@@ -156,23 +159,20 @@ pf_adaptor_asm_fix_ist_err_code:
 	pushq %rsi
 	pushq %rcx
 	
+	//get tss.rsp0 as destination (rdi)
+	rdgsbase %rcx
+	testq %rcx, %rcx
+	js .Lerr_c_no_swapgs //if gsbase is negative, then we were elevated
+	swapgs //swapgs was not a kernel address, so we need to swap it
+	orl $RFLAGS_SWAPPED_GS, 0x38(%rsp) //set bit 40 of the saved RFLAGS in the exception frame to indicate that we swapped gs. We will check this in the common handler and swap back if needed.
 
+
+.Lerr_c_no_swapgs:
 	testq %rdi, %rdi
 	js .Lerr_c_skip_set_dest //if negative, then we already have the right destination 
 
-	//get tss.rsp0 as destination (rdi)
-	rdgsbase %rdi
-	testq %rdi, %rdi
-	js .Lerr_c_no_swapgs //if gsbase is negative, then we were elevated
 	
-	swapgs //swapgs was not a kernel address, so we need to swap it
-	lea cpu_tss_rw(%rip), %rdi
-	movq %gs:TSS_sp0(%rdi), %rdi
-	swapgs //restore original gsbase
 
-	jmp .Lerr_c_skip_set_dest
-
-.Lerr_c_no_swapgs:
 	lea cpu_tss_rw(%rip), %rdi
 	movq %gs:TSS_sp0(%rdi), %rdi
 
@@ -197,6 +197,12 @@ pf_adaptor_asm_fix_ist_err_code:
 	//rdi now points to the bottom of the copied exception frame
 	lea -0x50(%rdi), %rsp //switch to new stack before we pop registers and jump to common handler
 
+	testl $RFLAGS_SWAPPED_GS, 0x38(%rsp)
+	jz .Lerr_c_no_swap_back
+	swapgs //swap back gs if we swapped it in the beginning of this function
+	andl $RFLAGS_SWAPPED_GS_MASK, 0x38(%rsp) //clear the swapped gs bit in the saved RFLAGS in the exception frame so that the common handler doesn't try to swapgs back again
+
+.Lerr_c_no_swap_back:
 	popq %rcx
 	popq %rsi
 	popq %rdi
@@ -234,7 +240,6 @@ pf_adaptor_asm_fix_ist_no_err_code:
 	pushq %rsi
 	pushq %rcx
 	
-
 	testq %rdi, %rdi
 	js .Lno_err_c_skip_set_dest //if negative, then we already have the right destination 
 
@@ -264,9 +269,9 @@ pf_adaptor_asm_fix_ist_no_err_code:
 	//rdi now points to the bottom of the copied exception frame
 	lea -0x48(%rdi), %rsp //switch to new stack before we pop registers and jump to common handler
 
-	popq %rdi
-	popq %rsi
 	popq %rcx
+	popq %rsi
+	popq %rdi
 	retq
 	// int3 to satifiy objtool desire for a trap after a speculative jump to try and improve security
 	int3
