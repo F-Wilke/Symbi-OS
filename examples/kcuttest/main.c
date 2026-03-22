@@ -216,7 +216,7 @@ int main(int argc, char **argv) {
 			      rc=ef_adaptor_init(0xE0, 0xE0+1, 1));
   printf("\t%d: ef_adaptor_per_cpu_init() rc=%ld\n", mypid, rc);
 
-  //  asm volatile ("int $0xE0\n");
+  asm volatile ("int $0xE0\n");
   
   exit(0);
   

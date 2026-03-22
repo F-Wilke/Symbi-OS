@@ -18,7 +18,9 @@
 
 #define VERBOSE 
 
-#define IST_INDEX_EF 6
+
+//#define IST_INDEX_EF 6
+#define IST_INDEX_EF IST_INDEX_NMI
 
 extern unsigned char ef_adaptor_isr_len[];
 extern unsigned long ef_adaptor_isrs[];
@@ -62,6 +64,28 @@ struct ef_adaptor_args {
   int tsthdlr;
 };
 
+// to stop faults on the memory we use on the
+// exception path we must prefault it
+// pesmistically we are touching all the module memory
+// not actually needed we could restrict ourselves
+// to the pages that contain the code and data but
+// to be save we are doing all of the module memmory
+static void touch_pages(void)
+{
+    struct module *mod = THIS_MODULE;
+    unsigned long addr;
+    void *base = mod->mem[MOD_TEXT].base;
+    unsigned int size = mod->mem[MOD_TEXT].size;
+    
+    for (addr = (unsigned long)base;
+         addr < (unsigned long)base + size;
+         addr += PAGE_SIZE) {        
+        volatile unsigned char dummy = *(unsigned char *)addr;
+        (void)dummy;
+        VINFO("ef_adaptor: prefaulted: %lx\n", addr);
+    }
+}
+
 static int
 ef_adaptor_per_cpu_init(void *arg)
 {
@@ -81,6 +105,10 @@ ef_adaptor_per_cpu_init(void *arg)
   gate_desc   gate;
   unsigned long hdlr;
 
+  // should not really need to do this per cpu given shared kernel
+  // page table but should not hurt --> will establish in tlb
+  touch_pages();
+
   tss = this_cpu_ptr(&cpu_tss_rw);
   if (tss->x86_tss.ist[IST_INDEX_EF] == 0) {
     // GFP_KERNEL   Normal kernel allocation, can sleep
@@ -92,7 +120,10 @@ ef_adaptor_per_cpu_init(void *arg)
       rc = -ENOMEM;
       goto error;
     }
-    
+    // being paranoid touch ef stack page just incase
+    volatile unsigned char dummy = *(unsigned char *)efstack;
+    (void)dummy;
+        
     // install in to tss for IST_INDEX_EF (IST7)
     tss->x86_tss.ist[IST_INDEX_EF] = efstack + PAGE_SIZE;  // set to top
   } else {
