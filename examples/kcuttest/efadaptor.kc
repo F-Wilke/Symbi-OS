@@ -281,6 +281,8 @@ int extension_init(void)
   pr_info("%s: Initializing with svec=%d evec=%d tsthdlr=%d\n", __func__, svec, evec, tsthdlr);
   ret = ef_adaptor_init(svec, evec, tsthdlr);
   pr_info("%s: Initialization complete with ret=%d\n", __func__, ret);
+  if (ret > 0) 
+    ret = 0; // if we updated any entries return 0 for success
   return ret;
 }
 
