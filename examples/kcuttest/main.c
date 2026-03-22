@@ -13,13 +13,43 @@
 #include "greeter.kh"
 #include "pfadaptor.kh"
 #include "evacuate.kh"
+#include "efadaptor.kh"
 
 #include <pthread.h>
+
+extern int mmap_stack_test(unsigned operation);
 
 extern void* vmalloc_noprof(unsigned long size);
 extern void vfree(void* ptr);
 
-int mmap_stack_test(unsigned operation);
+// discuss this not sure this is right
+__thread uintptr_t myktos = 0;
+
+static inline int
+resolve_sym(char *name, void **value)
+{
+  char *error;
+  dlerror();  // clear as per manpage
+  *value = dlsym(RTLD_DEFAULT, name);
+  error = dlerror();
+  if (error != NULL) {
+    fprintf(stderr, "%s\n", error);
+    return 0;
+  }
+  return 1;
+}
+
+static inline uintptr_t
+ktos()
+{
+  if (myktos==0) {
+    if (!resolve_sym("cpu_current_top_of_stack", (void **)&myktos)) {
+      printf("failed to resolve cpu_current_top_of_stack\n");
+      assert(0);
+    }
+  }
+  return myktos;
+}
 
 static inline unsigned long get_exc_page_fault_addr()
 {
@@ -77,39 +107,20 @@ int heaptouch(void)
   return sum;
 }
 
-static inline int
-resolve_sym(char *name, void **value)
-{
-  char *error;
-  dlerror();  // clear as per manpage
-  *value = dlsym(RTLD_DEFAULT, name);
-  error = dlerror();
-  if (error != NULL) {
-    fprintf(stderr, "%s\n", error);
-    return 0;
-  }
-  return 1;
-}
 
 void evacuate(int acquire)
 {
-  uintptr_t ktos;
   int rc;
   unsigned int cpu;
 
   assert(getcpu(&cpu, NULL)==0);
   
-  if (!resolve_sym("cpu_current_top_of_stack", (void **)&ktos)) {
-    printf("failed to resolve cpu_current_top_of_stack\n");
-    assert(0);
-  }
-
   if (acquire) {
-    SYM_ON_KERN_STACK_DYNSYM_DO(ktos, 
+    SYM_ON_KERN_STACK_DYNSYM_DO(ktos(), 
 				rc=acquire_exclusive_cpu(cpu,EVAC_KILL_NICELY));
     printf("acquire_exclusive_cpu: %d\n", rc);
   } else {
-    SYM_ON_KERN_STACK_DYNSYM_DO(ktos, 
+    SYM_ON_KERN_STACK_DYNSYM_DO(ktos(), 
 				release_exclusive_cpu(cpu));
     printf("release_exclusive_cpu:\n");
   }
@@ -128,8 +139,9 @@ typedef struct {
 } thread_arg_t;
 
 
-void threadfn(thread_arg_t* argptr)
+void *threadfn(void *arg)
 {
+  thread_arg_t* argptr = arg;
   int mypid = current_pid();
   if (argptr->arg % 100 == 0) {
     printf("\t\t\tthreadfn: in thread with arg=%u pid=%d\n", argptr->arg, mypid);
@@ -152,6 +164,7 @@ void threadfn(thread_arg_t* argptr)
   pthread_barrier_wait(&barrier);
   
   free(argptr);
+  return NULL;
 }
 
 // external kernel symbol forward declarations
@@ -198,6 +211,15 @@ int main(int argc, char **argv) {
 
   printf("\t%d: ELEVATED TESTS: START\n", mypid);
 
+  long rc;
+  SYM_ON_KERN_STACK_DYNSYM_DO(ktos(), 
+			      rc=ef_adaptor_init(0xE0, 0xE0+1, 1));
+  printf("\t%d: ef_adaptor_per_cpu_init() rc=%ld\n", mypid, rc);
+
+  asm volatile ("int $0xE0\n");
+  
+  exit(0);
+  
   if (evac) evacuate(1);
   
   sym_elevate();
@@ -252,8 +274,9 @@ int main(int argc, char **argv) {
   for (unsigned i=0; i<num_forks; i++) {
     pid_t cpid = fork();
     if (cpid==0) {
-      if (i % 100 == 0) printf("\t\t%d: %lx: FORK TEST: in child at iteration %lu\n", mypid, cr3, i);
+      if (i % 100 == 0) printf("\t\t%d: %lx: FORK TEST: in child at iteration %u\n", mypid, cr3, i);
       int mypid = current_pid(); //indirect elevate test: current_pid() is a kernel extension symbol that will only work if we are properly elevated in the child after fork
+      (void)mypid;
       stacktouch();
       exit(0);
     } else if (cpid<0) {
@@ -263,7 +286,7 @@ int main(int argc, char **argv) {
   }
   printf("\t\t%d: %lx: FORK TEST: END\n", mypid , cr3);
 
-  printf("\t\t%d: %lx: PTHREAD TEST: spawning %lu times with stack touches\n", mypid, cr3, num_spawns);
+  printf("\t\t%d: %lx: PTHREAD TEST: spawning %u times with stack touches\n", mypid, cr3, num_spawns);
   if (num_spawns) {
     pthread_barrier_init(&barrier, NULL, num_spawns);
     
@@ -273,9 +296,9 @@ int main(int argc, char **argv) {
       thread_arg_t* argptr = malloc(sizeof(thread_arg_t));
       argptr->arg = i;
       argptr->num_increments = num_increments;
-      int rc = pthread_create(&threads[i], NULL, (void *(*)(void *))threadfn, (void *)argptr);
+      int rc = pthread_create(&threads[i], NULL, threadfn, (void *)argptr);
       if (rc) {
-        printf("\t\t%d: %lx: PTHREAD TEST: pthread_create failed at iteration %lu with rc=%d\n", mypid, cr3, i, rc);
+        printf("\t\t%d: %lx: PTHREAD TEST: pthread_create failed at iteration %u with rc=%d\n", mypid, cr3, i, rc);
         break;
       }
     }
@@ -283,7 +306,7 @@ int main(int argc, char **argv) {
     for (unsigned i=0; i<num_spawns; i++) {
       int rc = pthread_join(threads[i], NULL);
       if (rc) {
-        printf("\t\t%d: %lx: PTHREAD TEST: pthread_join failed at iteration %lu with rc=%d\n", mypid, cr3, i, rc);
+        printf("\t\t%d: %lx: PTHREAD TEST: pthread_join failed at iteration %u with rc=%d\n", mypid, cr3, i, rc);
         break;
       }
     }
@@ -327,13 +350,8 @@ int main(int argc, char **argv) {
   
   printf("\t\t%d: %lx: IST STACK BEHAVIOUR TEST: END\n", mypid, cr3);
 
-
-
   sym_lower();
 
-
-
-  
   if (evac) evacuate(0);
 
   printf("\t%d: ELEVATED TESTS: END\n", mypid);  

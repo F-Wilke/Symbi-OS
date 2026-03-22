@@ -1,0 +1,6 @@
+#ifndef __EF_ADAPTOR_H__
+#define  __EF_ADAPTOR_H__
+
+long ef_adaptor_init(int vstart, int vend, int tsthdlr);
+
+#endif //  __EF_ADAPTOR_H__
