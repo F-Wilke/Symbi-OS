@@ -18,9 +18,13 @@
 
 #define VERBOSE 
 
-
-//#define IST_INDEX_EF 6
+// for debugging you can try and use the NMI IST if ours is
+// causing problems
+#ifndef EF_ADAPTOR_USE_NMI_IST
+#define IST_INDEX_EF 6
+#else
 #define IST_INDEX_EF IST_INDEX_NMI
+#endif
 
 extern unsigned char ef_adaptor_isr_len[];
 extern unsigned long ef_adaptor_isrs[];
