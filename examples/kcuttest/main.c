@@ -183,6 +183,7 @@ int main(int argc, char **argv) {
   unsigned num_forks = 1000, num_spawns = 1000, num_increments = 1000;
   unsigned stack_df = 1;
   unsigned do_test_pfasm = 0;
+  unsigned do_test_interrupt = 0;
   
   _printk_ptr = (void *)_printk;
   if (argc > 1) ssec     = atoi(argv[1]);
@@ -194,6 +195,7 @@ int main(int argc, char **argv) {
   if (argc > 7) num_increments = atoi(argv[7]);
   if (argc > 8) stack_df = atoi(argv[8]);
   if (argc > 9) do_test_pfasm = atoi(argv[9]);
+  if (argc > 10) do_test_interrupt = atoi(argv[10]);
   
   printf("%d: BASIC KCUT TESTS: BEGIN: ssec=%d bloop=%lu yieldcnt=%lu\n", mypid, ssec, bloop, yieldcnt);
 
@@ -216,9 +218,6 @@ int main(int argc, char **argv) {
 			      rc=ef_adaptor_init(0xE0, 0xE0+1, 1));
   printf("\t%d: ef_adaptor_per_cpu_init() rc=%ld\n", mypid, rc);
 
-  asm volatile ("int $0xE0\n");
-  
-  exit(0);
   
   if (evac) evacuate(1);
   
@@ -349,6 +348,14 @@ int main(int argc, char **argv) {
   }
   
   printf("\t\t%d: %lx: IST STACK BEHAVIOUR TEST: END\n", mypid, cr3);
+  
+  printf("\t\t%d: %lx: E0 INTERRUPT TEST: START\n", mypid, cr3);
+  if (do_test_interrupt) {
+    __asm__ volatile ("int $0xE0\n");
+    printf("\t\t%d: %lx: E0 INTERRUPT TEST: Completed first E0 test\n", mypid, cr3);
+  }
+  
+  printf("\t\t%d: %lx: E0 INTERRUPT TEST: END\n", mypid, cr3);
 
   sym_lower();
 

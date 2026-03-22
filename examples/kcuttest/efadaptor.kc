@@ -52,7 +52,6 @@ asm(
 "   movq  %rsp, %rdi\n"	
 "   call ef_adaptor_tsthdlr\n"
 "   pop  %rdi\n"
-"   addq $8, %rsp\n"	
 "   iretq\n"
 );
 
@@ -236,10 +235,24 @@ long ef_adaptor_init(int svec, int evec, int tsthdlr)
   struct ef_adaptor_args args = { .svec = svec, .evec = evec, .tsthdlr = tsthdlr};
   
   // to be pedantic we are stopping the world to setup the idt 
-  rc = stop_machine(ef_adaptor_per_cpu_init, &args, NULL);
+  // rc = stop_machine(ef_adaptor_per_cpu_init, &args, NULL);
+  rc = ef_adaptor_per_cpu_init(&args);
 
   if (rc<0) {
     pr_err("%s: stop_machine returned %d\n", __func__, rc);
   }
   return rc;
 }
+
+int extension_init(void)
+{
+  int svec = 14;
+  int evec = 14;
+  int tsthdlr = 0; // set to one to install test handler on all non-present entries
+  int ret = 0;
+  pr_info("%s: Initializing with svec=%d evec=%d tsthdlr=%d\n", __func__, svec, evec, tsthdlr);
+  ret = ef_adaptor_init(svec, evec, tsthdlr);
+  pr_info("%s: Initialization complete with ret=%d\n", __func__, ret);
+  return ret;
+}
+

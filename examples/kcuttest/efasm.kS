@@ -31,7 +31,7 @@ ef_adaptor_isr_##i:			;	\
 	movq ef_adaptor_orig_isrs + (##i * 8)(%rip), %rdi ;	\
 	movq %rdi, 8(%rsp)		;	\
 	pop  %rdi			;	\
-	jmp ef_common_hdlr
+	jmp pf_adaptor_asm_fix_ist_err_code
 	
 	.text
 	.global ef_adaptor_isrs

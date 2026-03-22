@@ -131,14 +131,6 @@ static int load_ext_module() {
 
   VPRINTF("init_load_module: ret=%d\n", ret);
 
-  VPRINTF("extra_init: ktos=%lx pfaddr=%lx dfaddr=%lx gpaddr=%lx\n", ktos, pfaddr, dfaddr, gpaddr);
-  if (ret == 0) {
-    SYM_ON_KERN_STACK_DYNSYM_DO(ktos, 
-				extra_init(pfaddr, dfaddr, gpaddr, &ret));
-    VPRINTF("extra_init: ret=%d\n", ret);
-    assert(ret != -1);
-  }
-  VPRINTF("exited load_ext_module ret=%d\n", ret);
   asm volatile(".global __load_ext_module_end\n"
 	       "__load_ext_module_end:");
   return ret;
