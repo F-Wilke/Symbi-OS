@@ -114,7 +114,7 @@ static void touch_pages(void)
     }
 }
 
-static void
+static int
 ef_adaptor_per_cpu_init(void *arg)
 {
   // create a new IDT and point vectors to use
@@ -245,8 +245,8 @@ ef_adaptor_per_cpu_init(void *arg)
   }
   // even if we did not set any idt entries to our new ist stack we leave it in
   // place on IST7 we only remove it if there was an error
-  //  return dirty;
-  return;
+  return dirty;
+  //return;
  error:
   pr_err("%s: CPU: %d: ERROR FAILED: freeing resources and releasing new idt\n",
 	 __func__, cpu);
@@ -255,8 +255,8 @@ ef_adaptor_per_cpu_init(void *arg)
     free_pages(efstack, 0);
   }
   if (idt) idt_adaptor_release(idt);
-  //  return -EINVAL;
-  return;
+  return -EINVAL;
+  // return;
 }
 
 
@@ -266,13 +266,13 @@ long ef_adaptor_init(int svec, int evec, int tsthdlr)
   struct ef_adaptor_args args = { .svec = svec, .evec = evec, .tsthdlr = tsthdlr};
   
   // to be pedantic we are stopping the world to setup the idt 
-  //rc = stop_machine(ef_adaptor_per_cpu_init, &args, NULL);
-  on_each_cpu(ef_adaptor_per_cpu_init, &args, 1); // 1 means wait for completion of all CPUs before returning
+  rc = stop_machine(ef_adaptor_per_cpu_init, &args, NULL);
+  //on_each_cpu(ef_adaptor_per_cpu_init, &args, 1); // 1 means wait for completion of all CPUs before returning
   //  rc = ef_adaptor_per_cpu_init(&args);
 
-  /* if (rc<0) { */
-  /*   pr_err("%s: stop_machine returned %d\n", __func__, rc); */
-  /* } */
+  if (rc<0) { 
+    pr_err("%s: stop_machine returned %d\n", __func__, rc); 
+  } 
   return rc;
 }
 
