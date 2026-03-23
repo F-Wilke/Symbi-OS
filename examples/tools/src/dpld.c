@@ -31,20 +31,6 @@ void (*set_app_got)(app_got_t* got);
     fprintf(stderr, fmt, ##__VA_ARGS__); \
   } while(0)
 
-static void extra_init(unsigned long pfaddr, unsigned long dfaddr, unsigned long gpaddr, int *ret)
-{
-  int (*func)(unsigned long, unsigned long, unsigned long);
-  func = (void *)kallsyms_lookup_name("pf_adaptor_init");
-  if (func) {
-    *ret = func(pfaddr, dfaddr, gpaddr);
-  } else {
-    *ret = -1;
-  }
-  asm volatile(".global __extra_init_end\n"
-	       "__extra_init_end:");
-  return;
-}
-
 static inline int init_module(void* umod, unsigned long len, char* uargs)
 {
   int ret;
@@ -159,11 +145,9 @@ static inline void touchstack(int numpages)
 
 
 extern char __load_ext_module_end[];
-extern char __extra_init_end[];
 static inline void touchfuncs()
 {
   touch_bytes((char *)load_ext_module, __load_ext_module_end);
-  touch_bytes((char *)extra_init, __extra_init_end);
 }
 
 //resolves a symbol by name, loading the module if necessary
