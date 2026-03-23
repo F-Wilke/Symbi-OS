@@ -12,6 +12,7 @@
 #include <linux/module.h>
 #include <asm/text-patching.h>
 #include <linux/stop_machine.h>
+#include <asm/irq_vectors.h>
 
 #include "idtadaptor.h"
 #include "efadaptor.kh"
@@ -313,7 +314,7 @@ long ef_adaptor_init(int *vecs, int vecs_nr, int tsthdlr)
 
 int extension_init(void)
 {
-  int vecs[] = { 14 };
+  int vecs[] = { 14, LOCAL_TIMER_VECTOR };
   const int vecs_nr = sizeof(vecs)/sizeof(int);
   int tsthdlr = 0; // set to one to install test handler on all non-present entries
   int ret = 0;
