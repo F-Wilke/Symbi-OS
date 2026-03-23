@@ -44,8 +44,8 @@ void idt_adaptor_activate(const gate_desc *idt) {
     .address	= (unsigned long)idt
   };
     
-  load_idt_wrapper(&idtr);
-  // on_each_cpu(load_idt_wrapper, &idtr, 1); // 1 means wait for completion of all CPUs before returning
+  // load_idt_wrapper(&idtr);
+  on_each_cpu(load_idt_wrapper, &idtr, 1); // 1 means wait for completion of all CPUs before returning
 
   // make it current
   if (current_idt) {
