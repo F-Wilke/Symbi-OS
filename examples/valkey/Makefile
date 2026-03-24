@@ -1,6 +1,6 @@
 .PHONY: clean distclean
 
-valkey/valkey-server: kcut/extension.a valkey/Makefile
+valkey/src/valkey-server: kcut/extension.a valkey/Makefile
 	make -j -C valkey V=1
 
 kcut/extension.a:
@@ -26,5 +26,5 @@ valkey-vanilla/Makefile:
 	git clone git@github.com:valkey-io/valkey.git valkey-vanilla
 	cd valkey-vanilla && git checkout -b 9.0.3 9.0.3
 
-valkey-vanilla/valkey-server: valkey-vanilla/Makefile
-	make -C valkey-vanilla V=1
+valkey-vanilla/src/valkey-server: valkey-vanilla/Makefile
+	make -j -C valkey-vanilla V=1
