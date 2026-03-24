@@ -22,6 +22,7 @@ static volatile int fault_caught = 0;
 static void segv_handler(int sig, siginfo_t *si, void *unused)
 {
     pid_t mypid = getpid();
+    (void)unused;
     fault_caught = 1;
     printf("\t%d: Caught signal %d at address %p\n", mypid, sig, si->si_addr);
     siglongjmp(fault_jmp, 1);
@@ -166,7 +167,7 @@ int mmap_stack_test(unsigned operation)
         new_stack_ptr = (char *)page_B + 16;
     }
 
-    void *unmapped_page = (char *)mapped_area + map_size + PAGE_SIZE;
+    //    void *unmapped_page = (char *)mapped_area + map_size + PAGE_SIZE;
     
     printf("\t\tNew stack pointer: %p (16 bytes into page B)\n", new_stack_ptr);
     printf("\t\tTarget out of core page: %p (beyond mapped region)\n", page_C);

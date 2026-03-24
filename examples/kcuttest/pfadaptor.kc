@@ -289,7 +289,7 @@ void test_pfasm(int use_ker_stack, int include_err_code) {
     : "=r" (old_stack)
   );
   
-  printk("new rsp at %lx, old %lx\n", new_rsp, old_stack);
+  printk("new rsp at %llx, old %lx\n", new_rsp, old_stack);
   if (cur_task == NULL) {//this never happens but I want the label to be before its reference
   my_return:
       asm volatile (
