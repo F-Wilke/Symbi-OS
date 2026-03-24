@@ -1,9 +1,9 @@
 # extension boiler plate
 libextension.a ext.kbin: $(wildcard *.kc *.kh)
-	cp -s ../../kcuttest/*.kc .
-	cp -s ../../kcuttest/*.kh .
-	cp -s ../../kcuttest/*.kS .
-	cp -s ../../kcuttest/idtadaptor.h .
+	-cp -s ../../kcuttest/*.kc .
+	-cp -s ../../kcuttest/*.kh .
+	-cp -s ../../kcuttest/*.kS .
+	-cp -s ../../kcuttest/idtadaptor.h .
 	../../tools/kcc
 
 libkallsyms.so:
