@@ -9,11 +9,16 @@ typeset -i BGWRK=${BGWRK:-0}
     [[ -a /sys/module/ext ]] && sudo rmmod ext
 }
 
-(( BGWRK )) && {
-    ((i=0)); while true; do ((i++)); done;
-} & bgpid=$!
-
-(( BGWRK )) && echo "STARTED BACKGROUND BUSY LOOP: $bgpid"
+(( BGWRK > 0)) && {
+    bgpids=()
+    for ((j=1; j<=BGWRK; j++)); do
+	{
+	    ((i=0)); while true; do ((i++)); sleep 1; cat /etc/passwd > /tmp/bgwrk.$i.out; done;
+	} &
+	bgpids+=$!
+    done
+}
+(( BGWRK )) && echo "STARTED BACKGROUND BUSY LOOPS: ${bgpids[*]}"
 
 LIBK=/proc/libkallsyms.so
 #[[  $LIBK -nt $LLIBK ]] && {
