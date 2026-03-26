@@ -243,16 +243,8 @@ static int process_vec(int cpu, gate_desc *idt, int tsthdlr, int vec)
   return 1;
 }
 
-static int
-ef_adaptor_per_cpu_init(void *arg)
+long ef_adaptor_init(int *vecs, int vecs_nr, int vstart, int vend, int tsthdlr)
 {
-  // create a new IDT and point vectors to use
-  struct ef_adaptor_args *args = arg;
-  int *vecs                    = args->vecs;
-  int vecs_nr                  = args->vecs_nr;
-  int vstart                   = args->vstart;
-  int vend                     = args->vend;
-  int tsthdlr                  = args->tsthdlr;
   unsigned long isr_len = (unsigned long)&ef_adaptor_isr_len;
   unsigned char *isrs   = (unsigned char *)&ef_adaptor_isrs;
   int cpu                      = smp_processor_id();
@@ -260,15 +252,15 @@ ef_adaptor_per_cpu_init(void *arg)
   int dirty                    = 0;
   int rc                       = 0;
 
-  
-  // should not really need to do this per cpu given shared kernel
-  // page table but should not hurt --> will establish in tlb
+  /*** TOUCH_PAGES: Ensure all pages of this module are in page table to ensure no
+       pagefaults of any kind can happen on isr paths ***/
   touch_pages();
 
+  // allocate and install an exception stack page on all cpu's
   on_each_cpu(ef_adaptor_setup_tss, &rc, 1); // 1 means wait for completion of all CPUs before returning
-
+  // rc is or of all processor rc's if non-zero at least one core failed
   if (rc<0) {
-    pr_err("%s: CPU %d: failed to setup tss with rc=%d\n", __func__, cpu, rc);
+    pr_err("%s: CPU %d: A CPU failed to setup tss with rc=%d\n", __func__, cpu, rc);
     goto error;
   }
   VINFO("%s: CPU %d: isr_len=%lu isrs=%lx\n", __func__, cpu,
@@ -314,22 +306,6 @@ ef_adaptor_per_cpu_init(void *arg)
   // return;
 }
 
-
-long ef_adaptor_init(int *vecs, int vecs_nr, int vstart, int vend, int tsthdlr)
-{
-  int rc = 0;
-  struct ef_adaptor_args args = { .vecs=vecs, .vecs_nr = vecs_nr, .vstart = vstart, .vend = vend, .tsthdlr = tsthdlr};
-  
-  // to be pedantic we are stopping the world to setup the idt 
-  // rc = stop_machine(ef_adaptor_per_cpu_init, &args, NULL);
-  // on_each_cpu(ef_adaptor_per_cpu_init, &args, 1); // 1 means wait for completion of all CPUs before returning
-   rc = ef_adaptor_per_cpu_init(&args);
-
-  if (rc<0) { 
-    pr_err("%s: stop_machine returned %d\n", __func__, rc); 
-  } 
-  return rc;
-}
 
 #define PF_VECTOR 14
 
