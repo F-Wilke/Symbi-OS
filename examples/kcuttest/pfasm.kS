@@ -2,6 +2,9 @@
 #include <asm/percpu.h>
 #include <asm/asm.h>
 #include <asm/nospec-branch.h>
+
+#define DEBUG_CNT
+
 // #include <asm/processor.h>
 	// HW ERROR CODE is last item pushed on to stack by exception logic
 	// bits are defined as follows for pagefault exception-- from intel manual
@@ -25,9 +28,10 @@ pf_adaptor_asm_fix_err_code_u:
 	// NYI: Add tests to only fix error code if faulting process is elevated and
 	//      address and fault type are sensible.  
 	// x86 allows immediate and memory operands without using a register
+#ifdef DEBUG_CNT	
 	incq  pf_adaptor_pf_cnt
 	//check current->symbiote_elevated and only set user bit if elevated
-	
+#endif	
 	testq %rsp, %rsp
 	js .Lskip_stack_touch
 	sti //if we page fault again, we must not have interrupts disabled, otherwise do_user_addr_fault will issue a warning.
@@ -67,7 +71,9 @@ pf_adaptor_asm_fix_err_code_uw:
 	// This will be executed on the kernel IST stack
 	// fix double fault 
 	// x86 allows immediate and memory operands without using a register
+#ifdef DEBUG_CNT		
 	incq  pf_adaptor_df_cnt
+#endif
 	pushq %rax
 	//which assumptions can I make about gs base after a double fault? 
 	//paranoid entry reads from $0xc0000101 to get a value for gsbase. So I can clearly not 
@@ -116,8 +122,9 @@ pf_adaptor_asm_fix_err_code_gp:
 	// This will be executed on the kernel IST stack
 	// fix double fault 
 	// x86 allows immediate and memory operands without using a register
+#ifdef DEBUG_CNT			
 	incq  pf_adaptor_gp_cnt
-	
+#endif	
 	testq %rsp, %rsp
 	js .Lgp_skip_stack_touch
 	sti //if we page fault again, we must not have interrupts disabled, otherwise do_user_addr_fault will issue a warning.
