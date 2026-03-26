@@ -150,11 +150,19 @@ pf_adaptor_asm_fix_ist_err_code:
 	// we copy the exception frame from the IST stack to the regular kernel stack
 	// if we faulted on a user stack we use tss.rsp0
 	// if we faulted on a kernel stack we use the stack pointer from the exception frame
+	cld
 	testq $0x8, %rsp
 	jz pf_adaptor_asm_fix_ist_no_err_code
 
 	pushq %rdi
 
+	xorq %rdi, %rdi
+	movq %rsp, %rdi
+	andq $0xfff, %rdi //mask to get the offset within the page of the faulting stack pointer. If this is small, then we likely faulted on a user stack. If it's large, then we likely faulted on a kernel stack. This is not a perfect check but should work in practice since user stacks are usually near the bottom of the user address space and kernel stacks are near the top of the kernel address space.
+	cmpq $0xfc0, %rdi //compare against a threshold near the top of the page
+	jne .Lerr_c_len_bad
+
+.Lerr_c_len_normal:
 	movq 0x30(%rsp), %rdi //faulting stack pointer from exception frame
 	pushq %rsi
 	pushq %rcx
@@ -206,13 +214,23 @@ pf_adaptor_asm_fix_ist_err_code:
 	popq %rcx
 	popq %rsi
 	popq %rdi
+	cmpq $0, (%rsp)
+	je .Lerr_c_ret_addr_bad
+
+.Lerr_c_ret_normal:
 	retq
 	// int3 to satifiy objtool desire for a trap after a speculative jump to try and improve security
 	int3
 
 
 
+.Lerr_c_len_bad:
+	jmp .Lerr_c_len_normal
+	int3
 
+.Lerr_c_ret_addr_bad:
+	jmp .Lerr_c_ret_normal
+	int3
 
 
 
@@ -236,6 +254,13 @@ pf_adaptor_asm_fix_ist_no_err_code:
 
 	pushq %rdi
 
+	xorq %rdi, %rdi
+	movq %rsp, %rdi
+	andq $0xfff, %rdi //mask to get the offset within the page of the faulting stack pointer. If this is small, then we likely faulted on a user stack. If it's large, then we likely faulted on a kernel stack. This is not a perfect check but should work in practice since user stacks are usually near the bottom of the user address space and kernel stacks are near the top of the kernel address space.
+	cmpq $0xfc8, %rdi //compare against a threshold near the top of the page
+	jne .Lno_err_c_len_bad
+
+.Lno_err_c_len_normal:
 	movq 0x28(%rsp), %rdi //faulting stack pointer from exception frame // validated
 	pushq %rsi
 	pushq %rcx
@@ -272,6 +297,12 @@ pf_adaptor_asm_fix_ist_no_err_code:
 	popq %rcx
 	popq %rsi
 	popq %rdi
+	cmpq $0, (%rsp)
+	je .Lerr_c_ret_addr_bad
 	retq
 	// int3 to satifiy objtool desire for a trap after a speculative jump to try and improve security
+	int3
+
+.Lno_err_c_len_bad:
+	jmp .Lno_err_c_len_normal
 	int3
