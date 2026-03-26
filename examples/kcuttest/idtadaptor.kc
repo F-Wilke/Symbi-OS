@@ -35,7 +35,10 @@ gate_desc * idt_adaptor_clone(void) {
 //on_each_cpu callback to load idt on each cpu. 
 //load_idt is a macro that cannot be passed to on_each_cpu
 void load_idt_wrapper(void* dtr) {
+  unsigned long flags;
+  local_irq_save(flags);
   load_idt((struct desc_ptr *)dtr);
+  local_irq_restore(flags);
 }
 
 void idt_adaptor_activate(const gate_desc *idt) {
