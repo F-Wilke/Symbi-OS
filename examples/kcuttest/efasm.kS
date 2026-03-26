@@ -1,3 +1,5 @@
+#include <asm/ibt.h>
+
 /*
 	.glob ef_isr_x
 	.glob ef_isr_tgt_x
@@ -22,13 +24,19 @@ ef_common_hdlr:
 	int3
 	
 	// switched to using a table to avoid code patching
+	// NOTE: not executing cld!!!! be careful
+	//       assume real entry points will take are of the real work
+	//       so we must be careful
 #define ef_isr(i)	 			\
 	.global ef_adaptor_isr_##i	;	\
 	.align 32			;	\
 ef_adaptor_isr_##i:			;	\
+        ENDBR                           ;       \
 	subq $8, %rsp			;	\
 	push %rdi			;	\
 	movq ef_adaptor_orig_isrs + (##i * 8)(%rip), %rdi ;	\
+	testq %rdi, %rdi                ;      \
+ohshit_##i:  jz    ohshit_##i           ;      \
 	movq %rdi, 8(%rsp)		;	\
 	pop  %rdi			;	\
 	jmp pf_adaptor_asm_fix_ist_err_code

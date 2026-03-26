@@ -13,11 +13,18 @@
 #include <asm/text-patching.h>
 #include <linux/stop_machine.h>
 #include <asm/irq_vectors.h>
+#include <asm/idtentry.h>
 
 #include "idtadaptor.h"
 #include "efadaptor.kh"
 
 #define VERBOSE 
+
+//#define EF_STACK_DEBUG
+
+#ifdef EF_STACK_DEBUG
+unsigned long ef_stacks[512];  /* 4096 bytes / 8 = 512 entries */
+#endif
 
 // for debugging you can try and use the NMI IST if ours is
 // causing problems
@@ -87,13 +94,6 @@ asm(
 
 extern void ef_adaptor_tsthdlr_asm(void);
 
-struct ef_adaptor_args {
-  int *vecs;
-  int vecs_nr;
-  int vstart;
-  int vend;
-  int tsthdlr;
-};
 
 // to stop faults on the memory we use on the
 // exception path we must prefault it
@@ -148,6 +148,12 @@ static void ef_adaptor_setup_tss(void* arg) {
         
     // install in to tss for IST_INDEX_EF (IST7)
     tss->x86_tss.ist[IST_INDEX_EF] = efstack + PAGE_SIZE;  // set to top
+#ifdef EF_STACK_DEBUG    
+    WRITE_ONCE(ef_stacks[cpu], efstack);
+    smp_wmb();
+    pr_info("%s: CPU %d: EF_STACK_DEBUG: registered page %lx at in ef_stacks %d\n",
+	    __func__, cpu, efstack, cpu);
+#endif	    
   } else {
     pr_warn("%s: CPU %d: tss.ist[%d] already set: %llx\n", __func__, cpu,
 	    IST_INDEX_EF, tss->x86_tss.ist[IST_INDEX_EF]);
@@ -164,9 +170,16 @@ static void ef_adaptor_cleanup_tss(void* arg) {
   tss = this_cpu_ptr(&cpu_tss_rw);
   if (tss->x86_tss.ist[IST_INDEX_EF] != 0) {
     tss->x86_tss.ist[IST_INDEX_EF] = 0;
+#ifdef EF_STACK_DEBUG    
+    WRITE_ONCE(ef_stacks[cpu], 0);
+    smp_wmb();
+    pr_info("%s: CPU %d: EF_STACK_DEBUG: unregistered for %d\n",
+	    __func__, cpu, cpu);
+#endif	    
     free_pages(tss->x86_tss.ist[IST_INDEX_EF] - PAGE_SIZE, 0);
     VINFO("%s: CPU %d: cleaned up IST7 (ist index %d) stack\n", __func__, cpu,
       IST_INDEX_EF);
+    
   } else {
     pr_warn("%s: CPU %d: tss.ist[%d] already cleared\n", __func__, cpu,
       IST_INDEX_EF);
@@ -307,12 +320,10 @@ long ef_adaptor_init(int *vecs, int vecs_nr, int vstart, int vend, int tsthdlr)
 }
 
 
-#define PF_VECTOR 14
-
 int extension_init(void)
 {
 #ifndef ALL_VECTORS
-  int vecs[]        = { PF_VECTOR, LOCAL_TIMER_VECTOR };
+  int vecs[]        = { X86_TRAP_PF, LOCAL_TIMER_VECTOR };
   const int vecs_nr = sizeof(vecs)/sizeof(int);
   int vstart        = -1;
   int vend          =  0;
