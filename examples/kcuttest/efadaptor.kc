@@ -90,6 +90,8 @@ extern void ef_adaptor_tsthdlr_asm(void);
 struct ef_adaptor_args {
   int *vecs;
   int vecs_nr;
+  int vstart;
+  int vend;
   int tsthdlr;
 };
 
@@ -171,6 +173,76 @@ static void ef_adaptor_cleanup_tss(void* arg) {
   }
 }
 
+static int process_vec(int cpu, gate_desc *idt, int tsthdlr, int vec)
+{
+  unsigned long isr_len = (unsigned long)&ef_adaptor_isr_len;
+  unsigned char *isrs   = (unsigned char *)&ef_adaptor_isrs;
+  unsigned long hdlr    = 0;
+  gate_desc   gate;
+
+  read_gate(idt, vec, &gate);
+  pr_info("%s: CPU %d: procesing gate: %d: hdlr=%lx IST=%d typ=%d dpl=%d p=%d\n",
+	  __func__, cpu,vec, hdlr, gate.bits.ist,
+	  gate.bits.type, gate.bits.dpl, gate.bits.p);
+
+    // for the moment we are not skipping non-present entries but
+    // we will need to think about what happens when some install a new 
+    // interrupt handler and if this our ist setting will persist
+    // but not today's problem
+  
+  if (gate.bits.p != 0 && tsthdlr) {
+    // if we have been direct to install the test handler
+    // then for all non-present entires we pretented the test
+    // handler was already installed
+    gate.segment      = __KERNEL_CS;
+    gate.bits.type    = GATE_INTERRUPT;
+    gate.bits.ist     = 0;   // will be set correctly lower down
+    gate.bits.dpl     = 3;
+    gate.bits.p       = 1;
+    gate.bits.zero    = 0;
+    gate_set_offset(&gate, (unsigned long)ef_adaptor_tsthdlr_asm);	
+    VINFO("%s:   CPU %d: IDT gate %d INSTALLING test handler\n",
+	  __func__, cpu, vec);
+  }
+  
+  // grab original handler this might be the test handler if it was
+  // set above
+  hdlr = gate_offset(&gate);
+  
+  // value zero is reseved as don't use an ist stack
+  if (gate.bits.ist != 0) {
+    VINFO("%s:   CPU %d: IDT gate %d already using and IST: %d skipping\n",
+	  __func__, cpu, vec, gate.bits.ist);
+    return 0;
+  }
+  gate.bits.ist = IST_INDEX_EF + 1; // note must add one to index!!! 
+  
+  // record vector's original handler that runs on rsp0
+  unsigned long expected  = 0;
+  unsigned long savedhdlr = cmpxchg(&ef_adaptor_orig_isrs[vec], expected, hdlr);
+  if (savedhdlr != 0 && savedhdlr != hdlr) {
+    // MISMATCH! Different CPUs have different handlers
+    pr_err("CPU %d: IDT Entry %d handler MISMATCH! "
+	   "Expected %lx, found %lx in array\n",
+	   cpu, vec, hdlr, savedhdlr);
+    return -1;
+  }
+  
+  VINFO("%s:     CPU %d: IDT gate %d saved %lx new handler %lx\n", __func__,
+	cpu, vec, hdlr, (unsigned long)&isrs[isr_len*vec]);
+  
+  // update gate to point to new ef vector specific isr
+  hdlr = (unsigned long)&(isrs[(isr_len*vec)]);		    
+  gate_set_offset(&gate, hdlr);
+  
+  write_idt_entry(idt, vec, &gate);
+  
+  VINFO("%s:     CPU %d: IDT gate: %d SET to hdlr=%lx IST=%d typ=%d dpl=%d p=%d\n",
+	__func__, cpu, vec, hdlr, gate.bits.ist, gate.bits.type,
+	gate.bits.dpl, gate.bits.p);    
+  return 1;
+}
+
 static int
 ef_adaptor_per_cpu_init(void *arg)
 {
@@ -178,21 +250,20 @@ ef_adaptor_per_cpu_init(void *arg)
   struct ef_adaptor_args *args = arg;
   int *vecs                    = args->vecs;
   int vecs_nr                  = args->vecs_nr;
+  int vstart                   = args->vstart;
+  int vend                     = args->vend;
   int tsthdlr                  = args->tsthdlr;
+  unsigned long isr_len = (unsigned long)&ef_adaptor_isr_len;
+  unsigned char *isrs   = (unsigned char *)&ef_adaptor_isrs;
   int cpu                      = smp_processor_id();
-  gate_desc * idt              = NULL;
+  gate_desc * idt              = NULL;		
   int dirty                    = 0;
   int rc                       = 0;
-  unsigned long isr_len        = (unsigned long)&ef_adaptor_isr_len;
-  unsigned char *isrs          = (unsigned char *)&ef_adaptor_isrs;
-  gate_desc   gate;
-  unsigned long hdlr;
 
   
   // should not really need to do this per cpu given shared kernel
   // page table but should not hurt --> will establish in tlb
   touch_pages();
-
 
   on_each_cpu(ef_adaptor_setup_tss, &rc, 1); // 1 means wait for completion of all CPUs before returning
 
@@ -207,72 +278,20 @@ ef_adaptor_per_cpu_init(void *arg)
   idt = idt_adaptor_clone();
   // so that we only modify the fields we care about we read the entire gate
   // update the fields we care about and write it back to the table.
-  for (int vec, i=0; i<vecs_nr; i++) {
-    vec=vecs[i];
-    read_gate(idt, vec, &gate);
-    pr_info("%s: CPU %d: procesing gate: %d: hdlr=%lx IST=%d typ=%d dpl=%d p=%d\n",
-	    __func__, cpu,vec, hdlr, gate.bits.ist,
-	    gate.bits.type, gate.bits.dpl, gate.bits.p);
-
-    // for the moment we are not skipping non-present entries but
-    // we will need to think about what happens when some install a new 
-    // interrupt handler and if this our ist setting will persist
-    // but not today's problem
-    
-    if (gate.bits.p != 0 && tsthdlr) {
-      // if we have been direct to install the test handler
-      // then for all non-present entires we pretented the test
-      // handler was already installed
-      gate.segment      = __KERNEL_CS;
-      gate.bits.type    = GATE_INTERRUPT;
-      gate.bits.ist     = 0;   // will be set correctly lower down
-      gate.bits.dpl     = 3;
-      gate.bits.p       = 1;
-      gate.bits.zero    = 0;
-      gate_set_offset(&gate, (unsigned long)ef_adaptor_tsthdlr_asm);	
-      VINFO("%s:   CPU %d: IDT gate %d INSTALLING test handler\n",
-	    __func__, cpu, vec);
-    }
-
-    // grab original handler this might be the test handler if it was
-    // set above
-    hdlr = gate_offset(&gate);
-    
-    // value zero is reseved as don't use an ist stack
-    if (gate.bits.ist != 0) {
-      VINFO("%s:   CPU %d: IDT gate %d already using and IST: %d skipping\n",
-	    __func__, cpu, vec, gate.bits.ist);
-      continue;
-    }
-    gate.bits.ist = IST_INDEX_EF + 1; // note must add one to index!!! 
-
-    // record vector's original handler that runs on rsp0
-    unsigned long expected  = 0;
-    unsigned long savedhdlr = cmpxchg(&ef_adaptor_orig_isrs[vec], expected, hdlr);
-    if (savedhdlr != 0 && savedhdlr != hdlr) {
-      // MISMATCH! Different CPUs have different handlers
-      pr_err("CPU %d: IDT Entry %d handler MISMATCH! "
-	     "Expected %lx, found %lx in array\n",
-	     cpu, vec, hdlr, savedhdlr);
-      goto error;
-      break;
-    }
-    
-    VINFO("%s:     CPU %d: IDT gate %d saved %lx new handler %lx\n", __func__,
-	  cpu, vec, hdlr, (unsigned long)&isrs[isr_len*vec]);
-
-    // update gate to point to new ef vector specific isr
-    hdlr = (unsigned long)&(isrs[(isr_len*vec)]);		    
-    gate_set_offset(&gate, hdlr);
-
-    write_idt_entry(idt, vec, &gate);
-    
-    VINFO("%s:     CPU %d: IDT gate: %d SET to hdlr=%lx IST=%d typ=%d dpl=%d p=%d\n",
-	  __func__, cpu, vec, hdlr, gate.bits.ist, gate.bits.type,
-	  gate.bits.dpl, gate.bits.p);    
-    dirty++;
+  for (int i=0; i<vecs_nr; i++) {
+    rc = process_vec(cpu, idt, tsthdlr, vecs[i]);
+    if (rc<0) goto error;
+    dirty += rc;
   }
 
+  if (vstart >= 0 && vend > vstart) {
+    for (int vec=vstart; vec<=vend; vec++) {
+      rc = process_vec(cpu, idt, tsthdlr, vec);
+      if (rc<0) goto error;
+      dirty += rc;
+    }
+  }
+  
   if (dirty) {
     idt_adaptor_activate((gate_desc *)idt); // 1 means wait for completion of all CPUs before returning
     VINFO("%s: CPU %d: updated %d idt entries ACTIVATED new idt\n", __func__, cpu,
@@ -296,10 +315,10 @@ ef_adaptor_per_cpu_init(void *arg)
 }
 
 
-long ef_adaptor_init(int *vecs, int vecs_nr, int tsthdlr)
+long ef_adaptor_init(int *vecs, int vecs_nr, int vstart, int vend, int tsthdlr)
 {
   int rc = 0;
-  struct ef_adaptor_args args = { .vecs=vecs, .vecs_nr = vecs_nr, .tsthdlr = tsthdlr};
+  struct ef_adaptor_args args = { .vecs=vecs, .vecs_nr = vecs_nr, .vstart = vstart, .vend = vend, .tsthdlr = tsthdlr};
   
   // to be pedantic we are stopping the world to setup the idt 
   // rc = stop_machine(ef_adaptor_per_cpu_init, &args, NULL);
@@ -312,17 +331,32 @@ long ef_adaptor_init(int *vecs, int vecs_nr, int tsthdlr)
   return rc;
 }
 
+#define PF_VECTOR 14
+
 int extension_init(void)
 {
-  int vecs[] = { 14, LOCAL_TIMER_VECTOR };
+#ifndef ALL_VECTORS
+  int vecs[]        = { PF_VECTOR, LOCAL_TIMER_VECTOR };
   const int vecs_nr = sizeof(vecs)/sizeof(int);
+  int vstart        = -1;
+  int vend          =  0;
+#else
+  int *vecs         = NULL;
+  const int vecs_nr = 0;
+  int vstart        = 0;
+  int vend          = 255;
+#endif
+  
   int tsthdlr = 0; // set to one to install test handler on all non-present entries
   int ret = 0;
   pr_info("%s: Initializing %d vectors tsthdlr=%d:\n", __func__, vecs_nr,  tsthdlr);
   for (int i=0; i<vecs_nr; i++) {
     pr_info("   vecs[%d]=%d\n", i, vecs[i]);
   }
-  ret = ef_adaptor_init(vecs, vecs_nr, tsthdlr);
+  pr_info("%s: Initializing vectors from %d to %d tsthdlr=%d\n", __func__, vstart, vend, tsthdlr);
+  
+  ret = ef_adaptor_init(vecs, vecs_nr, vstart, vend, tsthdlr);
+  
   pr_info("%s: Initialization complete with ret=%d\n", __func__, ret);
   if (ret > 0) 
     ret = 0; // if we updated any entries return 0 for success
