@@ -139,6 +139,7 @@ pf_adaptor_asm_fix_err_code_gp:
 pf_adaptor_asm_fix_ist_err_code_stack_swing:
 	ENDBR
 	movq new_rsp(%rip), %rsp
+	pushq %rdi
 
 
 
@@ -175,12 +176,31 @@ pf_adaptor_asm_fix_ist_err_code:
 	orl $RFLAGS_SWAPPED_GS, 0x38(%rsp) //set bit 40 of the saved RFLAGS in the exception frame to indicate that we swapped gs. We will check this in the common handler and swap back if needed.
 
 
-.Lerr_c_no_swapgs:
+.Lerr_c_no_swapgs:	
 	testq %rdi, %rdi
-	js .Lerr_c_skip_set_dest //if negative, then we already have the right destination 
+	jns .Lskip_double_fault_test //if positive then we came from user mode, no df check needed
+
+	//check for df here, we know we have a valid gs
+	lea cpu_tss_rw(%rip), %rsi
+	movq %gs:TSS_sp0(%rsi), %rsi
+	
+	//is cr2 on the page below our kernel stack (in rsi)?
+	subq $0x3000, %rsi
+	movq %cr2, %rcx
+	andw $0xf000, %cx
+	testq %rcx, %rsi
+	jns .Lerr_c_skip_set_dest //we are on some other page so no df
+
+	//here we'll jump to the DF handler
+	popq %rcx
+	popq %rsi
+	popq %rdi
+	addq $8, %rsp //remove return address from stack
+	jmp   *df_handler_location
+	int3
 
 	
-
+.Lskip_double_fault_test:
 	lea cpu_tss_rw(%rip), %rdi
 	movq %gs:TSS_sp0(%rdi), %rdi
 

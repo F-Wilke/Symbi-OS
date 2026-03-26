@@ -3,6 +3,9 @@
 #include "idtadaptor.h"
 #include "pfadaptor.kh"
 #include <asm/unwind_hints.h>
+#include <linux/percpu.h>
+#include <linux/slab.h>
+#include <linux/gfp.h>
 
 // from assembly code
 extern unsigned long pf_adaptor_asm_fix_err_code_u;
@@ -14,6 +17,8 @@ extern unsigned long pf_adaptor_asm_fix_ist_no_err_code;
 
 extern unsigned long pf_adaptor_asm_fix_ist_err_code_stack_swing;
 extern unsigned long pf_adaptor_asm_fix_ist_no_err_code_stack_swing;
+
+unsigned long df_handler_location = 0; // set to non-zero to redirect df handler to our handler for testing
 
 
 // module specfic statics
@@ -211,6 +216,25 @@ void print_idt_entries(void) {
         printk("IDT Entry %3u: Offset=0x%016llx Selector=0x%04x IST=%u TypeAttr=0x%02x\n",
                 i, offset, selector, ist, type_attr);
     }
+}
+
+
+void set_local_df_handler_location(void) {
+  struct dtr idtr;
+  struct idt_entry *idt;
+    
+  asm volatile ("sidt %0" : "=m" (idtr));
+
+  idt = (struct idt_entry *)idtr.base;
+  
+  unsigned int df_index = X86_TRAP_DF;
+  unsigned long offset = ((uint64_t)idt[df_index].offset2 << 32) |
+                          ((uint64_t)idt[df_index].offset1 << 16) |
+                          (uint64_t)idt[df_index].offset0;
+
+  printk("Current DF handler offset: 0x%016lx\n", offset);
+
+  df_handler_location = offset;
 }
 
 

@@ -17,6 +17,7 @@
 
 #include "idtadaptor.h"
 #include "efadaptor.kh"
+#include "pfadaptor.kh"
 
 #define VERBOSE 
 
@@ -319,6 +320,22 @@ long ef_adaptor_init(int *vecs, int vecs_nr, int vstart, int vend, int tsthdlr)
   // return;
 }
 
+extern unsigned long pf_adaptor_asm_fix_ist_err_code_stack_swing;
+extern unsigned long new_rsp;
+void cause_df(void)
+{
+  new_rsp = this_cpu_read(cpu_tss_rw.x86_tss.sp0);
+
+  new_rsp -= 0x2000;
+
+
+  asm volatile(
+      "jmp pf_adaptor_asm_fix_ist_err_code_stack_swing\t\n"
+  );
+}
+
+
+
 
 int extension_init(void)
 {
@@ -333,6 +350,8 @@ int extension_init(void)
   int vstart        = 0;
   int vend          = 255;
 #endif
+
+  set_local_df_handler_location();
   
   int tsthdlr = 0; // set to one to install test handler on all non-present entries
   int ret = 0;
@@ -345,6 +364,11 @@ int extension_init(void)
   ret = ef_adaptor_init(vecs, vecs_nr, vstart, vend, tsthdlr);
   
   pr_info("%s: Initialization complete with ret=%d\n", __func__, ret);
+
+
+  // cause_df();
+
+
   if (ret > 0) 
     ret = 0; // if we updated any entries return 0 for success
   return ret;
