@@ -1,5 +1,6 @@
 #include <asm/ibt.h>
 
+#define DEBUG_OHSHIT
 /*
 	.glob ef_isr_x
 	.glob ef_isr_tgt_x
@@ -16,6 +17,7 @@ ef_isr_tgt_x:
 	.quad 0
 	*/
 
+#ifdef DEBUG
 	.text
 	.align 16
 	.global ef_common_hdlr
@@ -35,12 +37,35 @@ ef_adaptor_isr_##i:			;	\
 	subq $8, %rsp			;	\
 	push %rdi			;	\
 	movq ef_adaptor_orig_isrs + (##i * 8)(%rip), %rdi ;	\
-	testq %rdi, %rdi                ;      \
+       testq %rdi, %rdi                ;      \
 ohshit_##i:  jz    ohshit_##i           ;      \
 	movq %rdi, 8(%rsp)		;	\
 	pop  %rdi			;	\
 	jmp pf_adaptor_asm_fix_ist_err_code
+#else
+	.text
+	.align 16
+	.global ef_common_hdlr
+ef_common_hdlr:
+	retq
+	int3
 	
+	// switched to using a table to avoid code patching
+	// NOTE: not executing cld!!!! be careful
+	//       assume real entry points will take are of the real work
+	//       so we must be careful
+#define ef_isr(i)	 			\
+	.global ef_adaptor_isr_##i	;	\
+	.align 32			;	\
+ef_adaptor_isr_##i:			;	\
+        ENDBR                           ;       \
+	subq $8, %rsp			;	\
+	push %rdi			;	\
+	movq ef_adaptor_orig_isrs + (##i * 8)(%rip), %rdi ;	\
+	movq %rdi, 8(%rsp)		;	\
+	pop  %rdi			;	\
+	jmp pf_adaptor_asm_fix_ist_err_code
+#endif
 	.text
 	.global ef_adaptor_isrs
 	.align 32

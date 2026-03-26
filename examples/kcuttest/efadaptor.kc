@@ -296,7 +296,10 @@ long ef_adaptor_init(int *vecs, int vecs_nr, int vstart, int vend, int tsthdlr)
       dirty += rc;
     }
   }
-  
+
+  smp_wmb(); // ensure all updates to shared memory are visible on all cores -- specifically we
+             // are worried about idt and isr cache
+
   if (dirty) {
     idt_adaptor_activate((gate_desc *)idt); // 1 means wait for completion of all CPUs before returning
     VINFO("%s: CPU %d: updated %d idt entries ACTIVATED new idt\n", __func__, cpu,
