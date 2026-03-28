@@ -18,6 +18,7 @@
 static int module_loaded = 0;
 static int verbose       = 0;
 
+extern void symbi_fast_lower(void);
 extern unsigned long kallsyms_lookup_name(const char *name);
 extern void* vmalloc_noprof(unsigned long size);
 
@@ -205,9 +206,10 @@ void* dpld_resolver(char* symbol_name) {
     module_loaded = 1;
   }
 
-
-  SYM_ON_KERN_STACK_DYNSYM_DO(ktos,
+  sym_elevate();
+  SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(ktos,
 			      addr=kallsyms_lookup_name(symbol_name));
+  symbi_fast_lower();
 
   VPRINTF("Resolved symbol %s to address %p\n", symbol_name, (void*)addr);
   
