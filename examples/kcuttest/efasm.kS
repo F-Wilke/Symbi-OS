@@ -1,6 +1,6 @@
 #include <asm/ibt.h>
 
-#define DEBUG_OHSHIT
+// #define DEBUG_OHSHIT
 /*
 	.glob ef_isr_x
 	.glob ef_isr_tgt_x
