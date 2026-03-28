@@ -17,7 +17,7 @@ ef_isr_tgt_x:
 	.quad 0
 	*/
 
-#ifdef DEBUG
+#ifdef DEBUG_OHSHIT
 	.text
 	.align 16
 	.global ef_common_hdlr

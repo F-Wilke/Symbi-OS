@@ -21,10 +21,11 @@
 
 #define VERBOSE 
 
-//#define EF_STACK_DEBUG
+#define EF_STACK_DEBUG
 
 #ifdef EF_STACK_DEBUG
-unsigned long ef_stacks[512];  /* 4096 bytes / 8 = 512 entries */
+extern unsigned long ef_stacks[512];  /* 4096 bytes / 8 = 512 entries */
+extern unsigned long ef_stack_check_skip;
 #endif
 
 // for debugging you can try and use the NMI IST if ours is
@@ -149,7 +150,7 @@ static void ef_adaptor_setup_tss(void* arg) {
         
     // install in to tss for IST_INDEX_EF (IST7)
     tss->x86_tss.ist[IST_INDEX_EF] = efstack + PAGE_SIZE;  // set to top
-#ifdef EF_STACK_DEBUG    
+#ifdef EF_STACK_DEBUG
     WRITE_ONCE(ef_stacks[cpu], efstack);
     smp_wmb();
     pr_info("%s: CPU %d: EF_STACK_DEBUG: registered page %lx at in ef_stacks %d\n",
@@ -270,6 +271,13 @@ long ef_adaptor_init(int *vecs, int vecs_nr, int vstart, int vend, int tsthdlr)
        pagefaults of any kind can happen on isr paths ***/
   touch_pages();
 
+#ifdef EF_STACK_DEBUG
+  // number of bytes at the bottom (high address of the stack page we expect can be non-zero) and therefore should be
+  // skipped when checking the exception frame stack page
+  ef_stack_check_skip   = (6 * 8); // maximum size of hardware pushed exception frame 6 quad words (includes error code)
+  ef_stack_check_skip += (1 * 8); // ef_isr_x pushes original exception handler on to ef_stack
+  ef_stack_check_skip  += (3 * 8); // we use 3 more quad words as spill space (popped off prior to) ret to original handler
+#endif
   // allocate and install an exception stack page on all cpu's
   on_each_cpu(ef_adaptor_setup_tss, &rc, 1); // 1 means wait for completion of all CPUs before returning
   // rc is or of all processor rc's if non-zero at least one core failed
