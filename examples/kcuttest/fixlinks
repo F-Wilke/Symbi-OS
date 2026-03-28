@@ -1,0 +1,28 @@
+#!/bin/bash
+
+find . -type l | while read file; do
+    target=$(readlink $file)
+    base=${file##*/}
+    dir=${target%/*}
+    fix=''
+    [[ ! -a $target ]] && {
+	echo -n "broken: $base->$target"
+	if [[ -a ../$base ]]; then 
+	    fix="../$base"
+	else
+	    type=${base##*.}
+	    src=${base%.*}
+	    [[ $type == 'c' || $type == 'h' || $type == 'S' ]] && {
+		[[ -a ../${src}.k${type} ]] && {
+  		   fix="../${src}.k${type}" 
+		}
+	    }
+	fi
+	[[ -n $fix ]] && {
+	    echo -n " fix:->$fix"
+	    rm $base
+	}
+	echo
+    }
+done
+		       
