@@ -197,7 +197,7 @@ void* dpld_resolver(char* symbol_name) {
     
     set_app_got(app_got);
     VPRINTF("Set app got pointer in extension\n");
-    sym_lower();
+    symbi_fast_lower();
     #else
     VPRINTF("No GOT entries to set, skipping GOT setup\n");
     #endif
