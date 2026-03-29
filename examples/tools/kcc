@@ -193,7 +193,7 @@ modules.h: ${name}.ko
 	$scriptdir/genmodsheader -o modules.h \$(wildcard *.ko)
 
 dpld.o: dpld.c app.h modules.h
-	gcc -Wall -Wextra -mno-red-zone -fno-omit-frame-pointer -Wfatal-errors -fPIC -I $symlibdir/include -DDDYNLINK -c -o \$@ \$<
+	gcc -Wall -Wextra -fno-omit-frame-pointer -Wfatal-errors -fPIC -I $symlibdir/include -DDDYNLINK -c -o \$@ \$<
 
 extension.o: extension.c app.h
 	gcc -c -o \$@ \$<
