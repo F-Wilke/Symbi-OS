@@ -29,7 +29,7 @@ index a7a11ad..8290128 100644
  if DARWIN
  memcached_dtrace.h: memcached_dtrace.d
 diff --git a/memcached.c b/memcached.c
-index 1858d02..8238b76 100644
+index 1858d02..274da35 100644
 --- a/memcached.c
 +++ b/memcached.c
 @@ -61,6 +61,11 @@
@@ -44,7 +44,7 @@ index 1858d02..8238b76 100644
  /*
   * forward declarations
   */
-@@ -126,10 +131,79 @@ enum transmit_result {
+@@ -126,10 +131,88 @@ enum transmit_result {
      TRANSMIT_HARD_ERROR  /** Can't write (c->state is set to conn_closing) */
  };
  
@@ -76,15 +76,7 @@ index 1858d02..8238b76 100644
 +}
 +#endif
 +
- /* Default methods to read from/ write to a socket */
- ssize_t tcp_read(conn *c, void *buf, size_t count) {
-     assert (c != NULL);
--    return read(c->sfd, buf, count);
-+
-+    struct iovec iov;
-+    iov.iov_base = buf;
-+    iov.iov_len = count;
-+
++int tcp_read_helper(conn *c, struct iovec *iovp, void *buf, size_t count, uint64_t* user_stack) {
 +#ifdef BRACKET_STACK
 +    if (!kcut_ktos) set_kcut_ktos();
 +#endif
@@ -97,21 +89,21 @@ index 1858d02..8238b76 100644
 +#ifdef BRACKET_STACK
 +        // privilege switching and stack switching
 +        sym_elevate();
-+        SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(kcut_ktos, ret = kcut_tcp_recvmsg(c->sfd, &iov));
++        SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(user_stack, kcut_ktos, ret = kcut_tcp_recvmsg(c->sfd, iovp));
 +        symbi_fast_lower();
 +#else
 +        // privilege switch only, stay on user stack
 +        sym_elevate();
-+        ret = kcut_tcp_recvmsg(c->sfd, &iov);
++        ret = kcut_tcp_recvmsg(c->sfd, iovp);
 +        symbi_fast_lower();
 +#endif 
 +#else // no privilege switch, assume we have already elevated
 +#ifdef BRACKET_STACK
 +        // no privilege switch, switch to kernel stack
-+        SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(kcut_ktos, ret = kcut_tcp_recvmsg(c->sfd, &iov));
++        SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(user_stack, kcut_ktos, ret = kcut_tcp_recvmsg(c->sfd, iovp));
 +#else
 +        // no privilege switch, remain on user stack
-+        ret = kcut_tcp_recvmsg(c->sfd, &iov);
++        ret = kcut_tcp_recvmsg(c->sfd, iovp);
 +#endif
 +#endif // BRACKET_PRIV
 +
@@ -122,18 +114,31 @@ index 1858d02..8238b76 100644
 +    }
 +
 +    return ret;
- }
- 
- ssize_t tcp_sendmsg(conn *c, struct msghdr *msg, int flags) {
-@@ -139,7 +213,48 @@ ssize_t tcp_sendmsg(conn *c, struct msghdr *msg, int flags) {
- 
- ssize_t tcp_write(conn *c, void *buf, size_t count) {
++}
++
++
+ /* Default methods to read from/ write to a socket */
+ ssize_t tcp_read(conn *c, void *buf, size_t count) {
      assert (c != NULL);
--    return write(c->sfd, buf, count);
+-    return read(c->sfd, buf, count);
 +
 +    struct iovec iov;
 +    iov.iov_base = buf;
 +    iov.iov_len = count;
++    uint64_t user_stack;
++
++    //make sure we dont put anything on our stack in the function in which we switch stacks
++    int ret = tcp_read_helper(c, &iov, buf, count, &user_stack);
++
++    return ret;
+ }
+ 
+ ssize_t tcp_sendmsg(conn *c, struct msghdr *msg, int flags) {
+@@ -137,9 +220,58 @@ ssize_t tcp_sendmsg(conn *c, struct msghdr *msg, int flags) {
+     return sendmsg(c->sfd, msg, flags);
+ }
+ 
++int tcp_send_helper(conn *c, struct iovec *iovp, void *buf, size_t count, uint64_t* user_stack) {
 +
 +#ifdef BRACKET_STACK
 +    if (!kcut_ktos) set_kcut_ktos();
@@ -147,21 +152,21 @@ index 1858d02..8238b76 100644
 +#ifdef BRACKET_STACK
 +        // privilege switching and stack switching
 +        sym_elevate();
-+        SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(kcut_ktos, ret = kcut_tcp_sendmsg(c->sfd, &iov));
++        SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(user_stack, kcut_ktos, ret = kcut_tcp_sendmsg(c->sfd, iovp));
 +        symbi_fast_lower();
 +#else
 +        // privilege switch only, stay on user stack
 +        sym_elevate();
-+        ret = kcut_tcp_sendmsg(c->sfd, &iov);
++        ret = kcut_tcp_sendmsg(c->sfd, iovp);
 +        symbi_fast_lower();
 +#endif 
 +#else // no privilege switch, assume we have already elevated
 +#ifdef BRACKET_STACK
 +        // no privilege switch, switch to kernel stack
-+        SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(kcut_ktos, ret = kcut_tcp_sendmsg(c->sfd, &iov));
++        SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(user_stack, kcut_ktos, ret = kcut_tcp_sendmsg(c->sfd, iovp));
 +#else
 +        // no privilege switch, remain on user stack
-+        ret = kcut_tcp_sendmsg(c->sfd, &iov);
++        ret = kcut_tcp_sendmsg(c->sfd, iovp);
 +#endif
 +#endif // BRACKET_PRIV
 +
@@ -170,12 +175,26 @@ index 1858d02..8238b76 100644
 +        ret = write(c->sfd, buf, count);
 +        kcut_cnt = KCUT_THRESHOLD;
 +    }
++    
++    return ret;
++}
 +
+ ssize_t tcp_write(conn *c, void *buf, size_t count) {
+     assert (c != NULL);
+-    return write(c->sfd, buf, count);
++
++    struct iovec iov;
++    iov.iov_base = buf;
++    iov.iov_len = count;
++    uint64_t user_stack;
++
++    //make sure we dont put anything on our stack in the function in which we switch stacks
++    int ret = tcp_send_helper(c, &iov, buf, count, &user_stack); 
 +    return ret;
  }
  
  static enum transmit_result transmit(conn *c);
-@@ -4692,6 +4807,8 @@ static int _mc_meta_load_cb(const char *tag, void *ctx, void *data) {
+@@ -4692,6 +4824,8 @@ static int _mc_meta_load_cb(const char *tag, void *ctx, void *data) {
      return reuse_mmap;
  }
  
@@ -184,7 +203,7 @@ index 1858d02..8238b76 100644
  int main (int argc, char **argv) {
      int c;
      bool lock_memory = false;
-@@ -6010,6 +6127,14 @@ int main (int argc, char **argv) {
+@@ -6010,6 +6144,14 @@ int main (int argc, char **argv) {
          settings.proxy_ctx = proxy_init(settings.proxy_uring, settings.proxy_memprofile);
      }
  #endif
@@ -199,7 +218,7 @@ index 1858d02..8238b76 100644
  #ifdef EXTSTORE
      memcached_thread_init(settings.num_threads, storage);
      init_lru_crawler(storage);
-@@ -6180,6 +6305,7 @@ int main (int argc, char **argv) {
+@@ -6180,6 +6322,7 @@ int main (int argc, char **argv) {
      /* Initialize the uriencode lookup table. */
      uriencode_init();
  
@@ -207,7 +226,7 @@ index 1858d02..8238b76 100644
      /* enter the event loop */
      while (!stop_main_loop) {
          if (event_base_loop(main_base, EVLOOP_ONCE) != 0) {
-@@ -6187,7 +6313,10 @@ int main (int argc, char **argv) {
+@@ -6187,7 +6330,10 @@ int main (int argc, char **argv) {
              break;
          }
      }

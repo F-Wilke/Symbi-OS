@@ -156,6 +156,7 @@ static inline void touchfuncs()
 void* dpld_resolver(char* symbol_name) {
   static unsigned long ktos = 0;
   unsigned long addr;
+  unsigned long user_stack;
 
   if (!verbose && getenv("DPLD_DEBUG")) verbose=1;
   
@@ -207,7 +208,7 @@ void* dpld_resolver(char* symbol_name) {
   }
 
   sym_elevate();
-  SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(ktos,
+  SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(&user_stack, ktos,
 			      addr=kallsyms_lookup_name(symbol_name));
   symbi_fast_lower();
 
