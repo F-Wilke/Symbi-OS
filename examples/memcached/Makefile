@@ -1,7 +1,7 @@
 .PHONY: clean distclean
 
 memcached/memcached: kcut/extension.a memcached/Makefile
-	make -C memcached memcached
+	make -C memcached memcached CFLAGS="-DBRACKET_STACK -DBRACKET_PRIV"
 
 kcut/extension.a:
 	make -C kcut
@@ -15,6 +15,7 @@ memcached/Makefile:
 
 kcut/memcached.patch:memcached/Makefile.am memcached/memcached.c
 	cd memcached && git diff > ../kcut/memcached.patch
+
 
 clean:
 	make -C kcut clean
@@ -30,4 +31,4 @@ memcached-vanilla/Makefile:
 	cd memcached-vanilla && ./configure
 
 memcached-vanilla/memcached: memcached-vanilla/Makefile
-	make -C memcached memcached
+	make -C memcached-vanilla memcached

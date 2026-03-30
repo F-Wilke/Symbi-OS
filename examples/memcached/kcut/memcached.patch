@@ -29,7 +29,7 @@ index a7a11ad..8290128 100644
  if DARWIN
  memcached_dtrace.h: memcached_dtrace.d
 diff --git a/memcached.c b/memcached.c
-index 1858d02..0062df7 100644
+index 1858d02..8238b76 100644
 --- a/memcached.c
 +++ b/memcached.c
 @@ -61,6 +61,11 @@
@@ -184,20 +184,30 @@ index 1858d02..0062df7 100644
  int main (int argc, char **argv) {
      int c;
      bool lock_memory = false;
-@@ -6179,7 +6296,11 @@ int main (int argc, char **argv) {
- 
-     /* Initialize the uriencode lookup table. */
-     uriencode_init();
--
+@@ -6010,6 +6127,14 @@ int main (int argc, char **argv) {
+         settings.proxy_ctx = proxy_init(settings.proxy_uring, settings.proxy_memprofile);
+     }
+ #endif
++
 +    
 +#ifndef BRACKET_PRIV
++    //we need to be elevated before setting up worker threads
 +    sym_elevate();
 +#endif
++
++
+ #ifdef EXTSTORE
+     memcached_thread_init(settings.num_threads, storage);
+     init_lru_crawler(storage);
+@@ -6180,6 +6305,7 @@ int main (int argc, char **argv) {
+     /* Initialize the uriencode lookup table. */
+     uriencode_init();
+ 
 +    
      /* enter the event loop */
      while (!stop_main_loop) {
          if (event_base_loop(main_base, EVLOOP_ONCE) != 0) {
-@@ -6187,7 +6308,10 @@ int main (int argc, char **argv) {
+@@ -6187,7 +6313,10 @@ int main (int argc, char **argv) {
              break;
          }
      }

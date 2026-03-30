@@ -21,6 +21,8 @@
 
 #define VERBOSE 
 
+#define ALL_VECTORS
+
 // #define EF_STACK_DEBUG
 
 #ifdef EF_STACK_DEBUG
