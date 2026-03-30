@@ -2,7 +2,7 @@ CC = gcc
 
 # lets go through these and make sure we understand what we really need -- if dpld logic
 # requires mitigations then let's stack switch extra as needed
-CFLAGS = -O0 -ggdb -Wall -Wextra -mno-red-zone -fno-omit-frame-pointer -Wfatal-errors \
+CFLAGS = -O0 -ggdb -Wall -Wextra -fno-omit-frame-pointer -Wfatal-errors \
 	-fPIC
 CFLAGS += -I ../../Symlib/include -DDYNLINK
 

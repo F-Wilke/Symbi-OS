@@ -17,6 +17,7 @@
 
 #include <pthread.h>
 
+extern void symbi_fast_lower(void);
 extern int mmap_stack_test(unsigned operation);
 
 extern void* vmalloc_noprof(unsigned long size);
@@ -116,12 +117,16 @@ void evacuate(int acquire)
   assert(getcpu(&cpu, NULL)==0);
   
   if (acquire) {
-    SYM_ON_KERN_STACK_DYNSYM_DO(ktos(), 
+    sym_elevate();
+    SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(ktos(), 
 				rc=acquire_exclusive_cpu(cpu,EVAC_KILL_NICELY));
+    symbi_fast_lower();
     printf("acquire_exclusive_cpu: %d\n", rc);
   } else {
-    SYM_ON_KERN_STACK_DYNSYM_DO(ktos(), 
+    sym_elevate();
+    SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(ktos(), 
 				release_exclusive_cpu(cpu));
+    symbi_fast_lower();
     printf("release_exclusive_cpu:\n");
   }
   
@@ -349,7 +354,7 @@ int main(int argc, char **argv) {
   
   printf("\t\t%d: %lx: E0 INTERRUPT TEST: END\n", mypid, cr3);
 
-  sym_lower();
+  symbi_fast_lower();
 
   if (evac) evacuate(0);
 
