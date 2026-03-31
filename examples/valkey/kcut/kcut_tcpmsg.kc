@@ -6,14 +6,17 @@
 #include "kcut_tcpmsg.kh"
 
 // consider switching to tcp_read_sock
-int kcut_tcp_recvmsg(int fd, struct iovec *iov)
+long kcut_tcp_recvmsg(kcut_tcp_args_t* args)
 {
   struct file *file;
   struct socket *sock;
   struct kiocb kiocb;
   struct msghdr msg;
+  
+  int fd = args->fd;
+  struct iovec *iov = args->iov;
   int ret = 0;
-
+  
   // int nonblock = 64;         // from ukl shortcut_tcp_recvmsg ???
   // FIXME: nonblock argument not used anymore now is a setting in flags
   //        check if we need to be adjust flags value
@@ -43,18 +46,21 @@ int kcut_tcp_recvmsg(int fd, struct iovec *iov)
   // JA: FIXME: examine nonblock behaviour might need to update
   // flags value as this is now set in flags
   ret = sock->ops->recvmsg(sock, &msg, iov->iov_len, flags);
-  return ret;
+  return (long)ret; //when we call this through a stack switch routine this is cast to a void*
 }
 
-int kcut_tcp_sendmsg(int fd, struct iovec *iov)
+long kcut_tcp_sendmsg(kcut_tcp_args_t* args)
 {
   struct file *file;
   struct socket *sock;
   struct sock *sk;
   struct kiocb kiocb;
   struct msghdr msg;
+  
+  int fd = args->fd;
+  struct iovec *iov = args->iov;
   int ret = 0;
-
+  
   //A: Translate fd to sock *
   //   From fs/read_write.c:ksys_write : 
   //     1. fd -> struct fd : 
@@ -79,6 +85,6 @@ int kcut_tcp_sendmsg(int fd, struct iovec *iov)
   // C: send the message
   ret = tcp_sendmsg(sk, &msg, iov->iov_len);
   
-  return ret;
+  return (long)ret;
 }
 
