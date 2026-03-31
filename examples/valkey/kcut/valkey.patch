@@ -113,142 +113,35 @@ index 838459336..e841e1b5c 100644
  }
  
 diff --git a/src/socket.c b/src/socket.c
-index 336b250cc..9832ad9cd 100644
+index 336b250cc..c1547dfd5 100644
 --- a/src/socket.c
 +++ b/src/socket.c
-@@ -155,12 +155,83 @@ static void connSocketClose(connection *conn) {
+@@ -155,12 +155,15 @@ static void connSocketClose(connection *conn) {
      zfree(conn);
  }
  
 +#include "../../kcut/kcut_tcpmsg.kh"
-+#include "LINF/sym_all.h"
-+
-+extern void symbi_fast_lower(void);
-+
-+#ifdef BRACKET_STACK
-+#include <dlfcn.h>
-+
-+unsigned long kcut_ktos = 0;
-+
-+static inline int
-+resolve_sym(char *name, void **value)
-+{
-+  char *error;
-+  dlerror();  // clear as per manpage
-+  *value = dlsym(RTLD_DEFAULT, name);
-+  error = dlerror();
-+  if (error != NULL) {
-+    fprintf(stderr, "%s\n", error);
-+    return 0;
-+  }
-+  return 1;
-+}
-+
-+static inline void set_kcut_ktos(void)
-+{
-+  if (!resolve_sym("cpu_current_top_of_stack", (void **)&kcut_ktos)) {
-+    printf("failed to resolve cpu_current_top_of_stack\n");
-+    assert(0);
-+  }
-+}
-+#endif
 +
  static int connSocketWrite(connection *conn, const void *data, size_t data_len) {
      /* Assert the main thread is not writing to a connection that is currently offloaded. */
      debugServerAssert(!(conn->flags & CONN_FLAG_ALLOW_ACCEPT_OFFLOAD) || !inMainThread() ||
                        ((client *)connGetPrivateData(conn))->io_write_state != CLIENT_PENDING_IO);
--
++    
++    ret = kcut_tcp_sendmsg(conn->fd, (void *)data, data_len);
+ 
 -    int ret = write(conn->fd, data, data_len);
-+    struct iovec iov;
-+    iov.iov_base = (void *)data;
-+    iov.iov_len = data_len;
-+
-+#ifdef BRACKET_STACK
-+    if (!kcut_ktos) set_kcut_ktos();
-+#endif
-+
-+    const int KCUT_THRESHOLD = 20;
-+    static int kcut_cnt = 0;
-+    int ret;    
-+    if (kcut_cnt) {
-+
-+#ifdef BRACKET_PRIV
-+#ifdef BRACKET_STACK
-+      // privilege switching and stack switching
-+      sym_elevate();
-+      SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(kcut_ktos, ret = kcut_tcp_sendmsg(conn->fd, &iov));
-+      symbi_fast_lower();
-+#else
-+      // privilege switch only, stay on user stack
-+      sym_elevate();
-+      ret = kcut_tcp_sendmsg(conn->fd, &iov);
-+      symbi_fast_lower();
-+#endif 
-+#else // no privilege switch, assume we have already elevated
-+#ifdef BRACKET_STACK
-+      // no privilege switch, switch to kernel stack
-+      SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(kcut_ktos, ret = kcut_tcp_sendmsg(conn->fd, &iov));
-+#else
-+      // no privilege switch, remain on user stack
-+      ret = kcut_tcp_sendmsg(conn->fd, &iov);
-+#endif
-+#endif // BRACKET_PRIV
-+
-+      kcut_cnt--;
-+    } else {
-+      ret = write(conn->fd, data, data_len);
-+      kcut_cnt = KCUT_THRESHOLD;
-+    }
      if (ret < 0 && errno != EAGAIN) {
          conn->last_errno = errno;
  
-@@ -191,9 +262,47 @@ static int connSocketRead(connection *conn, void *buf, size_t buf_len) {
+@@ -191,9 +194,9 @@ static int connSocketRead(connection *conn, void *buf, size_t buf_len) {
      /* Assert the main thread is not reading from a connection that is currently offloaded. */
      debugServerAssert(!(conn->flags & CONN_FLAG_ALLOW_ACCEPT_OFFLOAD) || !inMainThread() ||
                        ((client *)connGetPrivateData(conn))->io_read_state != CLIENT_PENDING_IO);
 -
 -
 -    int ret = read(conn->fd, buf, buf_len);
-+    struct iovec iov;
-+    iov.iov_base = (void *)buf;
-+    iov.iov_len = buf_len;
-+
-+#ifdef BRACKET_STACK
-+    if (!kcut_ktos) set_kcut_ktos();
-+#endif
-+
-+    const int KCUT_THRESHOLD = 20;
-+    static int kcut_cnt = 0;
-+    int ret;    
-+    if (kcut_cnt) {
-+      
-+#ifdef BRACKET_PRIV
-+#ifdef BRACKET_STACK
-+      // privilege switching and stack switching
-+      sym_elevate();
-+      SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(kcut_ktos, ret = kcut_tcp_recvmsg(conn->fd, &iov));
-+      symbi_fast_lower();
-+#else
-+      // privilege switch only, stay on user stack
-+      sym_elevate();
-+      ret = kcut_tcp_recvmsg(conn->fd, &iov);
-+      symbi_fast_lower();
-+#endif 
-+#else // no privilege switch, assume we have already elevated
-+#ifdef BRACKET_STACK
-+      // no privilege switch, switch to kernel stack
-+      SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(kcut_ktos, ret = kcut_tcp_recvmsg(conn->fd, &iov)); 
-+#else
-+      // no privilege switch, remain on user stack
-+      ret = kcut_tcp_recvmsg(conn->fd, &iov);
-+#endif
-+#endif // BRACKET_PRIV
-+
-+      kcut_cnt--;
-+    } else {
-+      ret = read(conn->fd, buf, buf_len);
-+      kcut_cnt = KCUT_THRESHOLD;
-+    }
++    
++    ret = kcut_tcp_recvmsg(conn->fd, buf, buf_len);
 +    
      if (!ret) {
          conn->state = CONN_STATE_CLOSED;
