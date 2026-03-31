@@ -37,6 +37,6 @@ echo $LD_LIBRARY_PATH
 #sync; sync; sync; sudo LD_DEBUG=all LD_LIBRARY_PATH=$LD_LIBRARY_PATH ./main
 
 #sudo kill -SIGUSR1 1
-sync; sync; sync; sudo LD_DEBUG=files LD_LIBRARY_PATH=$LD_LIBRARY_PATH ./main $@
+sync; sync; sync; sudo LD_DEBUG=files LD_LIBRARY_PATH=$LD_LIBRARY_PATH $GDB ./main $@
 #sudo systemctl default
 

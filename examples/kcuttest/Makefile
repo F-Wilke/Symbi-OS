@@ -1,9 +1,6 @@
 CC = gcc
 
-# lets go through these and make sure we understand what we really need -- if dpld logic
-# requires mitigations then let's stack switch extra as needed
-CFLAGS = -O0 -ggdb -Wall -Wextra -fno-omit-frame-pointer -Wfatal-errors \
-	-fPIC
+CFLAGS = -O4 -ggdb -Wall -Wextra  -Wfatal-errors -fPIC
 CFLAGS += -I ../../Symlib/include -DDYNLINK
 
 TARGETS :=  main main_static
@@ -29,8 +26,8 @@ libkallsyms.a:
 
 main:  main.o mmap_stack_test.o libextension.a libkallsyms.so
 #main:  main.o libkallsyms.so
-#	$(CC) $(CFLAGS) -o $@ $< -lc -L../../Symlib/dynam_build -lSym -L. -lkallsyms
-	$(CC) $(CFLAGS) -o $@ $< mmap_stack_test.o -lc ../../Symlib/build/L0/L0.a -L. -lkallsyms -lextension 
+#	$(CC) $(CFLAGS) -o $@ $< mmap_stack_test.o -lc -L../../Symlib/dynam_build -lSym -L. -lkallsyms  -L. -lkallsyms -lextension 
+	$(CC) $(CFLAGS) -o $@ $< mmap_stack_test.o -lc  -L. -lkallsyms -lextension ../../Symlib/build/L1/L1.a
 
 main_static: main.o mmap_stack_test.o libkallsyms.a libextension.a
 	$(CC) $(CFLAGS) -o $@ $^  libkallsyms.a libextension.a -lc -L../../Symlib/dynam_build -lSym  
