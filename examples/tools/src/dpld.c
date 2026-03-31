@@ -22,6 +22,11 @@ extern void symbi_fast_lower(void);
 extern unsigned long kallsyms_lookup_name(const char *name);
 extern void* vmalloc_noprof(unsigned long size);
 
+void *kallsyms_lookup_name_thunk(void *str) {
+  return (void *)kallsyms_lookup_name((const char *)str);
+}
+
+
 void (*set_app_got)(app_got_t* got);
 
 #define VPRINTF(fmt, ...) do {					\
@@ -78,7 +83,7 @@ force_symres_now()
 static int load_ext_module() {
   VPRINTF("starting load_ext_module\n");
   int ret = 0;
-  uintptr_t ktos;
+  uintptr_t ktos_offset;
    
   if (force_symres_now()==0) {
     VPRINTF("ERROR: failed to resolve symbols needed\n");
@@ -86,7 +91,7 @@ static int load_ext_module() {
     return 0;
   }
   
-  if (!resolve_sym("cpu_current_top_of_stack", (void **)&ktos)) {
+  if (!resolve_sym("cpu_current_top_of_stack", (void **)&ktos_offset)) {
     VPRINTF("failed to resolve cpu_current_top_of_stack\n");
     assert(0);
     return 0;
@@ -151,24 +156,76 @@ static inline void touchfuncs()
   touch_bytes((char *)load_ext_module, __load_ext_module_end);
 }
 
+
+// JA: FIXME: Discuss if app_got has to be in kernel memory
+//     and if so free it
+static void *
+elevated_app_got_init(void *unused)
+{
+  long rc = 0;
+  (void)unused;
+  
+  set_app_got = (void (*)(app_got_t *))kallsyms_lookup_name("set_app_got");;
+  if (!set_app_got) {
+    rc = -1;
+    goto done;
+  }
+
+  app_got_t* app_got = (app_got_t*)vmalloc_noprof(sizeof(app_got_t));
+  if (app_got == NULL) {
+    rc = -2;
+    goto done;
+  }
+  VPRINTF("allocated app_got at %p\n", app_got); 
+
+  SET_ALL_GOT_ENTRIES();
+  VPRINTF("Set GOT entries\n");
+  
+  set_app_got(app_got);
+  VPRINTF("Set app got pointer in extension\n");
+ done:
+  return (void *)rc;
+}
+
+
+static long
+app_got_init(unsigned long ktos_offset)
+{
+  long rc;
+  
+  sym_elevate();
+  rc = (long)stack_switch_kcall(ktos_offset, elevated_app_got_init, NULL);
+  symbi_fast_lower();
+
+  if (rc == -1) {
+    FATAL("Failed to resolve set_app_got symbol!\n");
+    exit(1);
+  }
+  if (rc == -2 ){
+    FATAL("Failed to allocate app_got");
+    exit(1);
+  }
+  return rc;
+}
+
 //resolves a symbol by name, loading the module if necessary
 //this is for symbols from the kernel module included in our fat binary
 void* dpld_resolver(char* symbol_name) {
-  static unsigned long ktos = 0;
+  static unsigned long ktos_offset = 0;
   unsigned long addr;
 
   if (!verbose && getenv("DPLD_DEBUG")) verbose=1;
   
   VPRINTF("%s: Resolving symbol %s\n", __func__, symbol_name);
 
-  if (ktos == 0 && !resolve_sym("cpu_current_top_of_stack", (void **)&ktos)) {
+  if (ktos_offset == 0 && !resolve_sym("cpu_current_top_of_stack", (void **)&ktos_offset)) {
     VPRINTF("failed to resolve cpu_current_top_of_stack\n");
     assert(0);
     return 0;
   }
 
   if (!module_loaded) {
-    int rc;
+    long rc;
     // we are responsible for getting pagefault adaptor installed
     //   -- need to be careful that text pages and stack do
     //      not generate faults while we do this
@@ -176,39 +233,24 @@ void* dpld_resolver(char* symbol_name) {
     touchstack(8);       
     rc = load_ext_module();
     if (rc != 1) {
-      VPRINTF("Failed to load ext module: %d\n", rc);
+      VPRINTF("Failed to load ext module: %ld\n", rc);
       //      exit(1);
     }
     VPRINTF("Loaded kallsyms module\n");
     
-    #ifndef NO_APP_GOT_ENTRIES
-    sym_elevate();
-    set_app_got = (void (*)(app_got_t *))kallsyms_lookup_name("set_app_got");;
-    if (!set_app_got) {
-      FATAL("Failed to resolve set_app_got symbol!\n");
-      exit(1);
-    }
-
-    app_got_t* app_got = (app_got_t*)vmalloc_noprof(sizeof(app_got_t));
-    VPRINTF("allocated app_got at %p\n", app_got);
-
-    SET_ALL_GOT_ENTRIES();
-    VPRINTF("Set GOT entries\n");
-    
-    set_app_got(app_got);
-    VPRINTF("Set app got pointer in extension\n");
-    symbi_fast_lower();
-    #else
+#ifndef NO_APP_GOT_ENTRIES
+    rc = app_got_init(ktos_offset);
+    assert(rc==0);
+#else
     VPRINTF("No GOT entries to set, skipping GOT setup\n");
-    #endif
-    
-    
+#endif
     module_loaded = 1;
   }
 
   sym_elevate();
-  SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(ktos,
-			      addr=kallsyms_lookup_name(symbol_name));
+
+  addr = (unsigned long)stack_switch_kcall(ktos_offset, kallsyms_lookup_name_thunk, (void *)symbol_name);
+
   symbi_fast_lower();
 
   VPRINTF("Resolved symbol %s to address %p\n", symbol_name, (void*)addr);

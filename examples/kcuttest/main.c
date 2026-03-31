@@ -111,21 +111,21 @@ int heaptouch(void)
 
 void evacuate(int acquire)
 {
-  int rc;
+  int rc=0;
   unsigned int cpu;
 
   assert(getcpu(&cpu, NULL)==0);
   
   if (acquire) {
     sym_elevate();
-    SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(ktos(), 
-				rc=acquire_exclusive_cpu(cpu,EVAC_KILL_NICELY));
+    //    SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(ktos(), 
+    //				rc=acquire_exclusive_cpu(cpu,EVAC_KILL_NICELY));
     symbi_fast_lower();
     printf("acquire_exclusive_cpu: %d\n", rc);
   } else {
     sym_elevate();
-    SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(ktos(), 
-				release_exclusive_cpu(cpu));
+    //    SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(ktos(), 
+    //				release_exclusive_cpu(cpu));
     symbi_fast_lower();
     printf("release_exclusive_cpu:\n");
   }
