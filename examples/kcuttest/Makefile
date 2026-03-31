@@ -1,9 +1,6 @@
 CC = gcc
 
-# lets go through these and make sure we understand what we really need -- if dpld logic
-# requires mitigations then let's stack switch extra as needed
-CFLAGS = -O0 -ggdb -Wall -Wextra -fno-omit-frame-pointer -Wfatal-errors \
-	-fPIC
+CFLAGS = -O4 -ggdb -Wall -Wextra  -Wfatal-errors -fPIC
 CFLAGS += -I ../../Symlib/include -DDYNLINK
 
 TARGETS :=  main main_static
