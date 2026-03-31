@@ -18,7 +18,7 @@
 static int module_loaded = 0;
 static int verbose       = 0;
 
-extern void symbi_fast_lower(void);
+extern int symbi_fast_lower(void);
 extern unsigned long kallsyms_lookup_name(const char *name);
 extern void* vmalloc_noprof(unsigned long size);
 
