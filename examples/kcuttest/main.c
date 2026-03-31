@@ -17,7 +17,7 @@
 
 #include <pthread.h>
 
-extern void symbi_fast_lower(void);
+extern int symbi_fast_lower(void);
 extern int mmap_stack_test(unsigned operation);
 
 extern void* vmalloc_noprof(unsigned long size);

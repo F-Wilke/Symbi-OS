@@ -30,7 +30,7 @@ main:  main.o mmap_stack_test.o libextension.a libkallsyms.so
 	$(CC) $(CFLAGS) -o $@ $< mmap_stack_test.o -lc  -L. -lkallsyms -lextension ../../Symlib/build/L1/L1.a
 
 main_static: main.o mmap_stack_test.o libkallsyms.a libextension.a
-	$(CC) $(CFLAGS) -o $@ $^  libkallsyms.a libextension.a -lc -L../../Symlib/dynam_build -lSym  
+	$(CC) $(CFLAGS) -o $@ $^  libkallsyms.a libextension.a -lc ../../Symlib/build/L1/L1.a
 
 clean:
 	rm -rf $(wildcard $(TARGETS) *.o *.so *.a ext.kbin .ext)
