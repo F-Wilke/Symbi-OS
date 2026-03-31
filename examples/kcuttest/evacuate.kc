@@ -131,7 +131,7 @@ static int killothers(int killifneeded) {
 
 // Migrate all other non-kernel tasks
 //othermask: the mask to migrate other tasks to (should not include the reserved cpu)
-static int migrateothers(int reserved_cpu, cpumask_var_t othermask)
+static int migrateothers(long reserved_cpu, cpumask_var_t othermask)
 {
   struct task_struct *p, *t;
   int rc, migrated = 0;
@@ -148,7 +148,7 @@ static int migrateothers(int reserved_cpu, cpumask_var_t othermask)
 	  pr_err("EVAC: failed to save the affinity for task %d\n", t->pid);
 	}
 	set_cpus_allowed_ptr(t, othermask);
-	pr_info("EVAC: Task %d migrated from CPU %d\n", t->pid, reserved_cpu);
+	pr_info("EVAC: Task %d migrated from CPU %ld\n", t->pid, reserved_cpu);
 	migrated++;
       }
     }
@@ -157,7 +157,7 @@ static int migrateothers(int reserved_cpu, cpumask_var_t othermask)
   return migrated;
 }
 
-int acquire_exclusive_cpu(int reserved_cpu, int killifneeded) {
+long acquire_exclusive_cpu(long reserved_cpu, int killifneeded) {
   cpumask_var_t target_mask=NULL, other_mask=NULL;
   struct sched_attr attr = {
     .size = sizeof(struct sched_attr),
@@ -169,13 +169,13 @@ int acquire_exclusive_cpu(int reserved_cpu, int killifneeded) {
  
   // sanity checks
   if (reserved_cpu < 0 || reserved_cpu >= nr_cpu_ids) {
-    pr_err("EVAC: Invalid CPU %d (valid range: 0-%d)\n", 
+    pr_err("EVAC: Invalid CPU %ld (valid range: 0-%d)\n", 
 	   reserved_cpu, nr_cpu_ids - 1);
     rc = -EINVAL;
     goto done;
   }
   if (!cpu_online(reserved_cpu)) {
-    pr_err("EVAC: CPU %d is not online\n", reserved_cpu);
+    pr_err("EVAC: CPU %ld is not online\n", reserved_cpu);
     rc = -EINVAL;
     goto done;
   }
@@ -214,7 +214,7 @@ int acquire_exclusive_cpu(int reserved_cpu, int killifneeded) {
       goto done;
     }
   } else {
-    pr_info("EVAC: migrating tasks from CPU %d\n", reserved_cpu);
+    pr_info("EVAC: migrating tasks from CPU %ld\n", reserved_cpu);
     cpumask_andnot(other_mask, cpu_online_mask, target_mask);
     mkcnt = migrateothers(reserved_cpu, other_mask);
     if (mkcnt<0) {
@@ -231,13 +231,13 @@ int acquire_exclusive_cpu(int reserved_cpu, int killifneeded) {
     goto done;
   } 
  
-  pr_info("EVAC: Task %d acquired exclusive access to CPU %d\n", 
+  pr_info("EVAC: Task %d acquired exclusive access to CPU %ld\n", 
 	  current->pid, reserved_cpu);
  done:
   if (target_mask) free_cpumask_var(target_mask);
   if (other_mask) free_cpumask_var(other_mask);
   if (rc != 0) {
-    pr_err("EVAC: %d failed to get exclusive access to CPU %d. Releasing\n",
+    pr_err("EVAC: %d failed to get exclusive access to CPU %ld. Releasing\n",
 	   current->pid, reserved_cpu);
     restore_saved_affinities();   // restore and cleanup any affinities that were saved
     // if we got here we did not boost our priority so no need to set back to normal
@@ -245,7 +245,7 @@ int acquire_exclusive_cpu(int reserved_cpu, int killifneeded) {
   return rc;  
 }
 
-void release_exclusive_cpu(int reserved_cpu) {
+void release_exclusive_cpu(long reserved_cpu) {
   struct sched_attr attr = {
     .size = sizeof(struct sched_attr),
     .sched_policy = SCHED_NORMAL,
@@ -255,12 +255,12 @@ void release_exclusive_cpu(int reserved_cpu) {
     
   // Restore normal affinity & this will also restore our own
   if (restore_saved_affinities()!=0) {
-    pr_err("EVAC: %d called release_exclusive_cpu(%d) not affinity was not saved!!\n",
+    pr_err("EVAC: %d called release_exclusive_cpu(%ld) not affinity was not saved!!\n",
 	   current->pid, reserved_cpu);
   }
   
   // Restore normal priority
   sched_setattr_nocheck(current, &attr);
   
-  pr_info("EVAC: Task %d released CPU %d\n", current->pid, reserved_cpu);
+  pr_info("EVAC: Task %d released CPU %ld\n", current->pid, reserved_cpu);
 }

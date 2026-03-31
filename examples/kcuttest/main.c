@@ -24,7 +24,7 @@ extern void* vmalloc_noprof(unsigned long size);
 extern void vfree(void* ptr);
 
 // discuss this not sure this is right
-__thread uintptr_t myktos = 0;
+__thread uintptr_t ktos_offset = 0;
 
 static inline int
 resolve_sym(char *name, void **value)
@@ -43,13 +43,13 @@ resolve_sym(char *name, void **value)
 static inline uintptr_t
 ktos()
 {
-  if (myktos==0) {
-    if (!resolve_sym("cpu_current_top_of_stack", (void **)&myktos)) {
+  if (ktos_offset==0) {
+    if (!resolve_sym("cpu_current_top_of_stack", (void **)&ktos_offset)) {
       printf("failed to resolve cpu_current_top_of_stack\n");
       assert(0);
     }
   }
-  return myktos;
+  return ktos_offset;
 }
 
 static inline unsigned long get_exc_page_fault_addr()
@@ -108,6 +108,24 @@ int heaptouch(void)
   return sum;
 }
 
+struct acquire_exclusive_cpu_thunk_args {
+  int cpu;
+  int killifneeded;
+};
+
+void * acquire_exclusive_cpu_thunk(void *args) {
+  struct acquire_exclusive_cpu_thunk_args *arg = args;
+  long cpu = arg->cpu;
+  int  kin = arg->killifneeded;
+  
+  return (void *)acquire_exclusive_cpu(cpu, kin);
+}
+
+void * release_exclusive_cpu_thunk(void *args) {
+  long cpu = (long)args;
+  release_exclusive_cpu(cpu);
+  return NULL;
+}
 
 void evacuate(int acquire)
 {
@@ -117,15 +135,15 @@ void evacuate(int acquire)
   assert(getcpu(&cpu, NULL)==0);
   
   if (acquire) {
+    struct acquire_exclusive_cpu_thunk_args args =
+      {.cpu = cpu, .killifneeded = EVAC_KILL_NICELY };
     sym_elevate();
-    //    SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(ktos(), 
-    //				rc=acquire_exclusive_cpu(cpu,EVAC_KILL_NICELY));
+    rc = (long)stack_switch_kcall(ktos(), acquire_exclusive_cpu_thunk, &args);
     symbi_fast_lower();
     printf("acquire_exclusive_cpu: %d\n", rc);
   } else {
     sym_elevate();
-    //    SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(ktos(), 
-    //				release_exclusive_cpu(cpu));
+    rc = (long)stack_switch_kcall(ktos(), release_exclusive_cpu_thunk, (void *)((long)cpu));
     symbi_fast_lower();
     printf("release_exclusive_cpu:\n");
   }
