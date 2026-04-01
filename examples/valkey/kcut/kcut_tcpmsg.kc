@@ -6,7 +6,7 @@
 #include "kcut_tcpmsg.kh"
 
 // consider switching to tcp_read_sock
-long kcut_tcp_recvmsg(kcut_tcp_args_t* args)
+long kcut_tcp_recvmsg_ker(kcut_tcp_args_t* args)
 {
   struct file *file;
   struct socket *sock;
@@ -49,7 +49,7 @@ long kcut_tcp_recvmsg(kcut_tcp_args_t* args)
   return (long)ret; //when we call this through a stack switch routine this is cast to a void*
 }
 
-long kcut_tcp_sendmsg(kcut_tcp_args_t* args)
+long kcut_tcp_sendmsg_ker(kcut_tcp_args_t* args)
 {
   struct file *file;
   struct socket *sock;
