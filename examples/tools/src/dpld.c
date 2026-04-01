@@ -21,6 +21,7 @@ static int verbose       = 0;
 extern int symbi_fast_lower(void);
 extern unsigned long kallsyms_lookup_name(const char *name);
 extern void* vmalloc_noprof(unsigned long size);
+extern int _printk(const char *fmt, ...);
 
 void *kallsyms_lookup_name_thunk(void *str) {
   return (void *)kallsyms_lookup_name((const char *)str);
@@ -35,6 +36,10 @@ void (*set_app_got)(app_got_t* got);
 
 #define FATAL(fmt, ...) do {					\
     fprintf(stderr, fmt, ##__VA_ARGS__); \
+  } while(0)
+
+#define VPRINTK(fmt, ...) do {					\
+    if (verbose) { _printk(fmt, ##__VA_ARGS__); }	\
   } while(0)
 
 static inline int init_module(void* umod, unsigned long len, char* uargs)
@@ -164,25 +169,27 @@ elevated_app_got_init(void *unused)
 {
   long rc = 0;
   (void)unused;
-  
+
+  VPRINTK("Starting elevated_app_got_init\n");  
   set_app_got = (void (*)(app_got_t *))kallsyms_lookup_name("set_app_got");;
   if (!set_app_got) {
     rc = -1;
     goto done;
   }
 
+  VPRINTK("Resolved set_app_got() to 0x%llx\n", (unsigned long)set_app_got);
   app_got_t* app_got = (app_got_t*)vmalloc_noprof(sizeof(app_got_t));
   if (app_got == NULL) {
     rc = -2;
     goto done;
   }
-  VPRINTF("allocated app_got at %p\n", app_got); 
+  VPRINTK("allocated app_got at 0x%llx\n", (unsigned long)app_got); 
 
   SET_ALL_GOT_ENTRIES();
-  VPRINTF("Set GOT entries\n");
+  VPRINTK("Set GOT entries\n");
   
   set_app_got(app_got);
-  VPRINTF("Set app got pointer in extension\n");
+  VPRINTK("Set app got pointer in extension\n");
  done:
   return (void *)rc;
 }
@@ -193,9 +200,11 @@ app_got_init(unsigned long ktos_offset)
 {
   long rc;
   
+  VPRINTF("Starting app_got_init\n");
   sym_elevate();
   rc = (long)stack_switch_kcall(ktos_offset, elevated_app_got_init, NULL);
   symbi_fast_lower();
+  VPRINTF("Finished app_got_init\n");
 
   if (rc == -1) {
     FATAL("Failed to resolve set_app_got symbol!\n");
@@ -232,7 +241,7 @@ void* dpld_resolver(char* symbol_name) {
     touchfuncs();
     touchstack(8);       
     rc = load_ext_module();
-    if (rc != 1) {
+    if (rc != 0) {
       VPRINTF("Failed to load ext module: %ld\n", rc);
       //      exit(1);
     }
