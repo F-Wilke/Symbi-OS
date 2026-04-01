@@ -1,5 +1,5 @@
 diff --git a/Makefile.am b/Makefile.am
-index a7a11ad..8290128 100644
+index a7a11ad..2e6bd2f 100644
 --- a/Makefile.am
 +++ b/Makefile.am
 @@ -89,14 +89,14 @@ memcached_SOURCES += tls.c tls.h
@@ -7,7 +7,7 @@ index a7a11ad..8290128 100644
  
  memcached_debug_SOURCES = $(memcached_SOURCES)
 -memcached_CPPFLAGS = -DNDEBUG
-+memcached_CPPFLAGS = -DNDEBUG -I../../../Symlib/include -I../kcut
++memcached_CPPFLAGS = -DNDEBUG -I../../../Symlib/include -I../kcut -DBRACKET_STACK
  memcached_debug_LDADD = @PROFILER_LDFLAGS@
  memcached_debug_CFLAGS = @PROFILER_FLAGS@
  
@@ -24,177 +24,51 @@ index a7a11ad..8290128 100644
  
  memcached_debug_CFLAGS += -DMEMCACHED_DEBUG
 -
-+memcached_LDADD +=  -L ../kcut -lc -lextension -lkallsyms -L ../../../Symlib/dynam_build -lSym
++memcached_LDADD +=  -L ../kcut -lc -lextension  ../../../Symlib/build/L1/L1.a -lkallsyms
  # build fails on Darwin with const signature replacements.
  if DARWIN
  memcached_dtrace.h: memcached_dtrace.d
 diff --git a/memcached.c b/memcached.c
-index 1858d02..274da35 100644
+index 1858d02..7dc1914 100644
 --- a/memcached.c
 +++ b/memcached.c
-@@ -61,6 +61,11 @@
+@@ -61,6 +61,9 @@
  #include <sys/sysctl.h>
  #endif
  
-+#include "kernel.h"
 +#include "LINF/sym_all.h"
-+#include "L1/stack_switch.h"
-+#include "../kcut/kcut_tcpmsg.kh"
++#include "../kcut/kcut_tcpmsg.h"
 +
  /*
   * forward declarations
   */
-@@ -126,10 +131,88 @@ enum transmit_result {
+@@ -126,10 +129,13 @@ enum transmit_result {
      TRANSMIT_HARD_ERROR  /** Can't write (c->state is set to conn_closing) */
  };
  
-+#ifdef BRACKET_STACK
-+#include <dlfcn.h>
-+
-+__thread unsigned long kcut_ktos = 0;
-+
-+static inline int
-+resolve_sym(char *name, void **value)
-+{
-+  char *error;
-+  dlerror();  // clear as per manpage
-+  *value = dlsym(RTLD_DEFAULT, name);
-+  error = dlerror();
-+  if (error != NULL) {
-+    fprintf(stderr, "%s\n", error);
-+    return 0;
-+  }
-+  return 1;
-+}
-+
-+static inline void set_kcut_ktos(void)
-+{
-+  if (!resolve_sym("cpu_current_top_of_stack", (void **)&kcut_ktos)) {
-+    printf("failed to resolve cpu_current_top_of_stack\n");
-+    assert(0);
-+  }
-+}
-+#endif
-+
-+int tcp_read_helper(conn *c, struct iovec *iovp, void *buf, size_t count, uint64_t* user_stack) {
-+#ifdef BRACKET_STACK
-+    if (!kcut_ktos) set_kcut_ktos();
-+#endif
-+
-+    const int KCUT_THRESHOLD = 20;
-+    static int kcut_cnt = 0;
-+    int ret;    
-+    if (kcut_cnt) {
-+#ifdef BRACKET_PRIV
-+#ifdef BRACKET_STACK
-+        // privilege switching and stack switching
-+        sym_elevate();
-+        SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(user_stack, kcut_ktos, ret = kcut_tcp_recvmsg(c->sfd, iovp));
-+        symbi_fast_lower();
-+#else
-+        // privilege switch only, stay on user stack
-+        sym_elevate();
-+        ret = kcut_tcp_recvmsg(c->sfd, iovp);
-+        symbi_fast_lower();
-+#endif 
-+#else // no privilege switch, assume we have already elevated
-+#ifdef BRACKET_STACK
-+        // no privilege switch, switch to kernel stack
-+        SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(user_stack, kcut_ktos, ret = kcut_tcp_recvmsg(c->sfd, iovp));
-+#else
-+        // no privilege switch, remain on user stack
-+        ret = kcut_tcp_recvmsg(c->sfd, iovp);
-+#endif
-+#endif // BRACKET_PRIV
-+
-+        kcut_cnt--;
-+    } else {
-+        ret = read(c->sfd, buf, count);
-+        kcut_cnt = KCUT_THRESHOLD;
-+    }
-+
-+    return ret;
-+}
-+
 +
  /* Default methods to read from/ write to a socket */
  ssize_t tcp_read(conn *c, void *buf, size_t count) {
      assert (c != NULL);
 -    return read(c->sfd, buf, count);
 +
-+    struct iovec iov;
-+    iov.iov_base = buf;
-+    iov.iov_len = count;
-+    uint64_t user_stack;
-+
-+    //make sure we dont put anything on our stack in the function in which we switch stacks
-+    int ret = tcp_read_helper(c, &iov, buf, count, &user_stack);
-+
++    int ret = kcut_tcp_recvmsg(c->sfd, buf, count);
 +    return ret;
  }
  
  ssize_t tcp_sendmsg(conn *c, struct msghdr *msg, int flags) {
-@@ -137,9 +220,58 @@ ssize_t tcp_sendmsg(conn *c, struct msghdr *msg, int flags) {
-     return sendmsg(c->sfd, msg, flags);
- }
+@@ -139,7 +145,9 @@ ssize_t tcp_sendmsg(conn *c, struct msghdr *msg, int flags) {
  
-+int tcp_send_helper(conn *c, struct iovec *iovp, void *buf, size_t count, uint64_t* user_stack) {
-+
-+#ifdef BRACKET_STACK
-+    if (!kcut_ktos) set_kcut_ktos();
-+#endif
-+
-+    const int KCUT_THRESHOLD = 20;
-+    static int kcut_cnt = 0;
-+    int ret;    
-+    if (kcut_cnt) {
-+#ifdef BRACKET_PRIV
-+#ifdef BRACKET_STACK
-+        // privilege switching and stack switching
-+        sym_elevate();
-+        SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(user_stack, kcut_ktos, ret = kcut_tcp_sendmsg(c->sfd, iovp));
-+        symbi_fast_lower();
-+#else
-+        // privilege switch only, stay on user stack
-+        sym_elevate();
-+        ret = kcut_tcp_sendmsg(c->sfd, iovp);
-+        symbi_fast_lower();
-+#endif 
-+#else // no privilege switch, assume we have already elevated
-+#ifdef BRACKET_STACK
-+        // no privilege switch, switch to kernel stack
-+        SYM_ON_KERN_STACK_DYNSYM_DO_CONST_PRIV(user_stack, kcut_ktos, ret = kcut_tcp_sendmsg(c->sfd, iovp));
-+#else
-+        // no privilege switch, remain on user stack
-+        ret = kcut_tcp_sendmsg(c->sfd, iovp);
-+#endif
-+#endif // BRACKET_PRIV
-+
-+        kcut_cnt--;
-+    } else {
-+        ret = write(c->sfd, buf, count);
-+        kcut_cnt = KCUT_THRESHOLD;
-+    }
-+    
-+    return ret;
-+}
-+
  ssize_t tcp_write(conn *c, void *buf, size_t count) {
      assert (c != NULL);
 -    return write(c->sfd, buf, count);
 +
-+    struct iovec iov;
-+    iov.iov_base = buf;
-+    iov.iov_len = count;
-+    uint64_t user_stack;
-+
-+    //make sure we dont put anything on our stack in the function in which we switch stacks
-+    int ret = tcp_send_helper(c, &iov, buf, count, &user_stack); 
++    int ret = kcut_tcp_sendmsg(c->sfd, buf, count);
 +    return ret;
  }
  
  static enum transmit_result transmit(conn *c);
-@@ -4692,6 +4824,8 @@ static int _mc_meta_load_cb(const char *tag, void *ctx, void *data) {
+@@ -4692,6 +4700,8 @@ static int _mc_meta_load_cb(const char *tag, void *ctx, void *data) {
      return reuse_mmap;
  }
  
@@ -203,22 +77,15 @@ index 1858d02..274da35 100644
  int main (int argc, char **argv) {
      int c;
      bool lock_memory = false;
-@@ -6010,6 +6144,14 @@ int main (int argc, char **argv) {
+@@ -6010,6 +6020,7 @@ int main (int argc, char **argv) {
          settings.proxy_ctx = proxy_init(settings.proxy_uring, settings.proxy_memprofile);
      }
  #endif
 +
-+    
-+#ifndef BRACKET_PRIV
-+    //we need to be elevated before setting up worker threads
-+    sym_elevate();
-+#endif
-+
-+
  #ifdef EXTSTORE
      memcached_thread_init(settings.num_threads, storage);
      init_lru_crawler(storage);
-@@ -6180,6 +6322,7 @@ int main (int argc, char **argv) {
+@@ -6180,6 +6191,7 @@ int main (int argc, char **argv) {
      /* Initialize the uriencode lookup table. */
      uriencode_init();
  
@@ -226,7 +93,7 @@ index 1858d02..274da35 100644
      /* enter the event loop */
      while (!stop_main_loop) {
          if (event_base_loop(main_base, EVLOOP_ONCE) != 0) {
-@@ -6187,7 +6330,10 @@ int main (int argc, char **argv) {
+@@ -6187,7 +6199,10 @@ int main (int argc, char **argv) {
              break;
          }
      }
@@ -238,3 +105,36 @@ index 1858d02..274da35 100644
      switch (stop_main_loop) {
          case GRACE_STOP:
              fprintf(stderr, "Gracefully stopping\n");
+diff --git a/thread.c b/thread.c
+index 9ddbefe..0380c7d 100644
+--- a/thread.c
++++ b/thread.c
+@@ -501,6 +501,7 @@ static void setup_thread(LIBEVENT_THREAD *me) {
+     thread_io_queue_add(me, IO_QUEUE_NONE, NULL, NULL);
+ }
+ 
++#include "LINF/sym_all.h"
+ /*
+  * Worker thread: main event loop
+  */
+@@ -521,6 +522,10 @@ static void *worker_libevent(void *arg) {
+     }
+ 
+     register_thread_initialized();
++#ifndef BRACKET_PRIV
++    sym_elevate();
++#endif
++
+     while (!event_base_got_exit(me->base)) {
+         event_base_loop(me->base, EVLOOP_ONCE);
+         // Run IO queues after the event loop to catch things like
+@@ -532,6 +537,9 @@ static void *worker_libevent(void *arg) {
+         }
+ #endif
+     }
++#ifndef BRACKET_PRIV
++    symbi_fast_lower();
++#endif
+     // same mechanism used to watch for all threads exiting.
+     register_thread_initialized();
+ 

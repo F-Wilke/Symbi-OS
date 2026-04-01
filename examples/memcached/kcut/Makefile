@@ -4,6 +4,7 @@ libextension.a ext.kbin: $(wildcard *.kc *.kh)
 	-cp -s ../../kcuttest/*.kh .
 	-cp -s ../../kcuttest/*.kS .
 	-cp -s ../../kcuttest/idtadaptor.h .
+	-cp -s ../../valkey/kcut/kcut_tcpmsg.* .
 	../../tools/kcc
 
 libkallsyms.so:

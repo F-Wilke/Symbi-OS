@@ -1,7 +1,7 @@
 .PHONY: clean distclean
 
 memcached/memcached: kcut/extension.a memcached/Makefile
-	make -C memcached memcached CFLAGS="-DBRACKET_STACK -DBRACKET_PRIV"
+	make -C memcached memcached
 
 kcut/extension.a:
 	make -C kcut
