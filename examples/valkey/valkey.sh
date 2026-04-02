@@ -1,5 +1,5 @@
 #!/bin/bash
-#set -x
+[[ -n $GDB || -n $DBG ]] && set -x
 MY_PATH=$(realpath $0)
 
 SYMBIPATH=${MY_PATH%%/Symbi-OS/*}
@@ -42,7 +42,9 @@ VALKEYSERVER=${VALKEYPATH}/valkey/src/valkey-server
      exit -1
  }
 
-echo "RUNNING: LD_DEBUG=files LD_LIBRARY_PATH=${KALLSYMSPATH} $VALKEYSERVER $VALKEYCONFIG $@" > /dev/stderr
+echo "RUNNING: sudo LD_DEBUG=files LD_LIBRARY_PATH=${KALLSYMSPATH} $VALKEYSERVER $VALKEYCONFIG $@" > /dev/stderr
 
-LD_DEBUG=files LD_LIBRARY_PATH=${KALLSYMSPATH} $VALKEYSERVER $VALKEYCONFIG $@
+[[ -n $GDB ]] && GDB="$GDB --args"
+
+sudo LD_DEBUG=files LD_LIBRARY_PATH=${KALLSYMSPATH} $GDB  $VALKEYSERVER $VALKEYCONFIG $@
 

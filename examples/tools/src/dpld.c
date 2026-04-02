@@ -51,7 +51,7 @@ static inline int init_module(void* umod, unsigned long len, char* uargs)
     if (errno == EEXIST) {
       VPRINTF("Already loaded...\n");
     } else {
-      assert(0);
+      fprintf(stderr, "ERROR: dpld:%s: errno=%d (be sure check kernel/console logs)\n", __func__, errno);
     }
   }
   return ret;
@@ -243,7 +243,8 @@ void* dpld_resolver(char* symbol_name) {
     rc = load_ext_module();
     if (rc != 0) {
       VPRINTF("Failed to load ext module: %ld\n", rc);
-      //      exit(1);
+      fprintf(stderr, "ERROR:%s: load_ext_module failed\n", __func__);
+      exit(-1);
     }
     VPRINTF("Loaded kallsyms module\n");
     

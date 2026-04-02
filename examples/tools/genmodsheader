@@ -50,7 +50,7 @@ def generate_modules_header(module_names, output_file):
         "// Macro to load a single module, init_module handles the case where it's already loaded and will print a message instead of erroring out",
         "#define LOAD_MODULE(modname) do {\\",
         "    size_t size = (size_t)&_binary_##modname##_ko_size;\\",
-        "    ret = init_module((void*)_binary_##modname##_ko_start, size, \"\"); \\",
+        "    ret += init_module((void*)_binary_##modname##_ko_start, size, \"\"); \\",
         "  } while(0)",
         "",
     ])
