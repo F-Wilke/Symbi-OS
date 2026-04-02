@@ -189,8 +189,10 @@ void *threadfn(void *arg)
   return NULL;
 }
 
-int dummy_func(void) {
-  return 1;
+static void *
+dummy_func(void* unused) {
+  (void)unused;
+  return (void *)1;
 }
 
 // external kernel symbol forward declarations
@@ -302,10 +304,21 @@ int main(int argc, char **argv) {
   uintptr_t ktos_offset = 0;
   ktos_offset = (uintptr_t)dlsym(RTLD_DEFAULT, "cpu_current_top_of_stack");
   if (!ktos_offset) { printf("\t\t%d: %lx: ERROR: FAILED TO GET KERN STACK\n", mypid, cr3);
-  }else{ printf("\t\t%d: %lx GOT KERNEL STACK %lu\n", mypid, cr3, ktos_offset); }
+  }else{ printf("\t\t%d: %lx: GOT KERNEL STACK %lx\n", mypid, cr3, ktos_offset); }
   long count = 0;
   for (int i=0; i<elevlowerloop; i++) { count += (long)stack_switch_kcall(ktos_offset, dummy_func, NULL); }
-  printf("\t\t%d: %lx: ELEVATED STACK SWITCH LOOP TEST: END\n", mypid, cr3);
+  printf("\t\t%d: %lx: ELEVATED STACK SWITCH LOOP TEST: END: LOOPED %ld\n", mypid, cr3, count);
+
+  printf("\t\t%d: %lx: ELEVATE + LOWER + STACK SWITCH LOOP TEST: START: going into loop for %lu\n", mypid, cr3, elevlowerloop);
+  symbi_fast_lower();
+  count = 0;
+  for (int i=0; i<elevlowerloop; i++) {
+    sym_elevate();
+    count += (long)stack_switch_kcall(ktos_offset, dummy_func, NULL);
+    symbi_fast_lower();
+  }
+  sym_elevate();
+  printf("\t\t%d: %lx: ELEVATE + LOWER + STACK SWITCH LOOP TEST: END LOOPED %ld\n", mypid, cr3, count);
   
   printf("\t\t%d: %lx: FORK TEST: forking %u times with stack touches\n", mypid, cr3, num_forks);
   for (unsigned i=0; i<num_forks; i++) {
