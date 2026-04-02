@@ -3,5 +3,3 @@
 *.kS
 app.h
 idtadaptor.h
-!kcut_tcpmsg.kh
-!kcut_tcpmsg.kc

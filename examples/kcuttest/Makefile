@@ -1,10 +1,10 @@
 CC = gcc
 
-CFLAGS = -O4 -ggdb -Wall -Wextra  -Wfatal-errors -fPIC
+CFLAGS = -O2 -ggdb -Wall -Wextra  -Wfatal-errors -fPIC
 CFLAGS += -I ../../Symlib/include -DDYNLINK
 
 TARGETS :=  main main_static
-MODNAME := idt_adaptor.kbin
+MODNAME := kcuttest.kbin
 .PHONY: all clean libkallsyms.so libkallsyms.a
 
 all: $(TARGETS)
