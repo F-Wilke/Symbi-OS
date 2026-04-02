@@ -1,15 +1,12 @@
 diff --git a/Makefile.am b/Makefile.am
-index a7a11ad..a8f30b2 100644
+index a7a11ad..68438b8 100644
 --- a/Makefile.am
 +++ b/Makefile.am
-@@ -89,14 +89,14 @@ memcached_SOURCES += tls.c tls.h
- endif
- 
- memcached_debug_SOURCES = $(memcached_SOURCES)
--memcached_CPPFLAGS = -DNDEBUG
-+memcached_CPPFLAGS = -DNDEBUG -I../../../Symlib/include -I../kcut
+@@ -92,11 +92,12 @@ memcached_debug_SOURCES = $(memcached_SOURCES)
+ memcached_CPPFLAGS = -DNDEBUG
  memcached_debug_LDADD = @PROFILER_LDFLAGS@
  memcached_debug_CFLAGS = @PROFILER_FLAGS@
++AM_CFLAGS =  -I../../../Symlib/include -I../kcut
  
  memcached_LDADD =
  memcached_LDFLAGS =
@@ -19,7 +16,7 @@ index a7a11ad..a8f30b2 100644
  memcached_debug_DEPENDENCIES =
  CLEANFILES=
  
-@@ -131,7 +131,7 @@ memcached_debug_LDADD += vendor/liburing/src/liburing.a
+@@ -131,7 +132,7 @@ memcached_debug_LDADD += vendor/liburing/src/liburing.a
  endif
  
  memcached_debug_CFLAGS += -DMEMCACHED_DEBUG

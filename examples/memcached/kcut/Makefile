@@ -1,11 +1,13 @@
+MODNAME := kcuttest.kbin
+
 # extension boiler plate
 libextension.a ext.kbin: $(wildcard *.kc *.kh)
 	-cp -s ../../kcuttest/*.kc .
 	-cp -s ../../kcuttest/*.kh .
 	-cp -s ../../kcuttest/*.kS .
 	-cp -s ../../kcuttest/idtadaptor.h .
-	-cp -s ../../valkey/kcut/kcut_tcpmsg.* .
-	../../tools/kcc
+	target=$(MODNAME) ../../tools/kcc
+
 
 libkallsyms.so:
 	cp /proc/$@ $@
