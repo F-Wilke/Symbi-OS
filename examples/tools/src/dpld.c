@@ -50,6 +50,7 @@ static inline int init_module(void* umod, unsigned long len, char* uargs)
     VPRINTF("Error loading module errno=%d\n", errno);
     if (errno == EEXIST) {
       VPRINTF("Already loaded...\n");
+      ret=0;
     } else {
       fprintf(stderr, "ERROR: dpld:%s: errno=%d (be sure check kernel/console logs)\n", __func__, errno);
     }
