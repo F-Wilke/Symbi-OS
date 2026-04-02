@@ -189,6 +189,10 @@ void *threadfn(void *arg)
   return NULL;
 }
 
+int dummy_func(void) {
+  return 1;
+}
+
 // external kernel symbol forward declarations
 // "native" kernel symbols -- NOT kernel "extension" symbols will be resolved at load time
 extern int overflowuid;
@@ -199,6 +203,7 @@ int main(int argc, char **argv) {
   pid_t mypid = getpid();
   int ssec = 1;
   volatile signed long bloop=1000000000;
+  volatile signed long elevlowerloop=10000;
   signed long yieldcnt=10;
   int evac=1;
   volatile void * _printk_ptr;
@@ -210,14 +215,15 @@ int main(int argc, char **argv) {
   _printk_ptr = (void *)_printk;
   if (argc > 1) ssec     = atoi(argv[1]);
   if (argc > 2) bloop    = atol(argv[2]);
-  if (argc > 3) yieldcnt = atol(argv[3]);
-  if (argc > 4) evac     = atoi(argv[4]);
-  if (argc > 5) num_forks = atoi(argv[5]);
-  if (argc > 6) num_spawns = atoi(argv[6]);
-  if (argc > 7) num_increments = atoi(argv[7]);
-  if (argc > 8) stack_df = atoi(argv[8]);
-  if (argc > 9) do_test_pfasm = atoi(argv[9]);
-  if (argc > 10) do_test_interrupt = atoi(argv[10]);
+  if (argc > 3) elevlowerloop = atol(argv[3]);
+  if (argc > 4) yieldcnt = atol(argv[4]);
+  if (argc > 5) evac     = atoi(argv[5]);
+  if (argc > 6) num_forks = atoi(argv[6]);
+  if (argc > 7) num_spawns = atoi(argv[7]);
+  if (argc > 8) num_increments = atoi(argv[8]);
+  if (argc > 9) stack_df = atoi(argv[9]);
+  if (argc > 10) do_test_pfasm = atoi(argv[10]);
+  if (argc > 11) do_test_interrupt = atoi(argv[11]);
   
   printf("%d: BASIC KCUT TESTS: BEGIN: ssec=%d bloop=%lu yieldcnt=%lu\n", mypid, ssec, bloop, yieldcnt);
 
@@ -282,6 +288,24 @@ int main(int argc, char **argv) {
   printf("\t\t%d: %lx: USER BUSY LOOP TEST: START: going into busy loop for %lu\n", mypid, cr3, bloop);
   while (bloop) { bloop--; }
   printf("\t\t%d: %lx: USER BUSY LOOP TEST: END: %lu\n", mypid, cr3, bloop);
+
+  printf("\t\t%d: %lx: ELEVATE LOWER LOOP TEST: START: going into loop for %lu\n", mypid, cr3, elevlowerloop);
+  symbi_fast_lower();
+  for (int i=0; i<elevlowerloop; i++) {
+    sym_elevate();
+    symbi_fast_lower();
+  }
+  sym_elevate();
+  printf("\t\t%d: %lx: ELEVATE LOWER LOOP TEST: END\n", mypid, cr3);
+
+  printf("\t\t%d: %lx: ELEVATED STACK SWITCH LOOP TEST: START: going into loop for %lu\n", mypid, cr3, elevlowerloop);
+  uintptr_t ktos_offset = 0;
+  ktos_offset = (uintptr_t)dlsym(RTLD_DEFAULT, "cpu_current_top_of_stack");
+  if (!ktos_offset) { printf("\t\t%d: %lx: ERROR: FAILED TO GET KERN STACK\n", mypid, cr3);
+  }else{ printf("\t\t%d: %lx GOT KERNEL STACK %lu\n", mypid, cr3, ktos_offset); }
+  long count = 0;
+  for (int i=0; i<elevlowerloop; i++) { count += (long)stack_switch_kcall(ktos_offset, dummy_func, NULL); }
+  printf("\t\t%d: %lx: ELEVATED STACK SWITCH LOOP TEST: END\n", mypid, cr3);
   
   printf("\t\t%d: %lx: FORK TEST: forking %u times with stack touches\n", mypid, cr3, num_forks);
   for (unsigned i=0; i<num_forks; i++) {
