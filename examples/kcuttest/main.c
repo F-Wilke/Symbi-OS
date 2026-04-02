@@ -17,7 +17,6 @@
 
 #include <pthread.h>
 
-extern int symbi_fast_lower(void);
 extern int mmap_stack_test(unsigned operation);
 
 extern void* vmalloc_noprof(unsigned long size);
@@ -199,7 +198,7 @@ extern int _printk(const char *fmt, ...);
 int main(int argc, char **argv) {
   pid_t mypid = getpid();
   int ssec = 1;
-  signed long bloop=1000000000;
+  volatile signed long bloop=1000000000;
   signed long yieldcnt=10;
   int evac=1;
   volatile void * _printk_ptr;

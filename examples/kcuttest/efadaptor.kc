@@ -23,7 +23,7 @@
 
 #define ALL_VECTORS
 
-// #define EF_STACK_DEBUG
+//#define EF_STACK_DEBUG
 
 #ifdef EF_STACK_DEBUG
 extern unsigned long ef_stacks[512];  /* 4096 bytes / 8 = 512 entries */
@@ -84,9 +84,12 @@ static __attribute__((used)) void ef_adaptor_tsthdlr(unsigned long *rsp)
 
 // Assembly wrapper (needed for call to test C handler"
 // swapgs so that per-cpu kernel code is safe
+// JA FIXME: Does not ensure 16 byte stack alignment prior to call
+//           C code as required by SysV ABI
 asm(
 "   .global ef_adaptor_tsthdlr_asm\n"
 "ef_adaptor_tsthdlr_asm:\n"
+"   cld\n"
 "   swapgs\n"
 "   pushq %rdi\n"
 "   movq  %rsp, %rdi\n"	
