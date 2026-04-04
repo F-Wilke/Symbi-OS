@@ -3,11 +3,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <sched.h>
+#include <unistd.h>
 
-#include "L0/sym_lib.h"
-#include "LINF/sym_all.h"
-#include "L1/stack_switch.h"
-#include <dlfcn.h>
 #include <assert.h>
 #include <inttypes.h>
 #include "greeter.kh"
@@ -15,41 +12,16 @@
 #include "evacuate.kh"
 #include "efadaptor.kh"
 
+
+#include "ktos.h"
+#include "evacuate.h"
+
 #include <pthread.h>
 
 extern int mmap_stack_test(unsigned operation);
 
 extern void* vmalloc_noprof(unsigned long size);
 extern void vfree(void* ptr);
-
-// discuss this not sure this is right
-__thread uintptr_t ktos_offset = 0;
-
-static inline int
-resolve_sym(char *name, void **value)
-{
-  char *error;
-  dlerror();  // clear as per manpage
-  *value = dlsym(RTLD_DEFAULT, name);
-  error = dlerror();
-  if (error != NULL) {
-    fprintf(stderr, "%s\n", error);
-    return 0;
-  }
-  return 1;
-}
-
-static inline uintptr_t
-ktos()
-{
-  if (ktos_offset==0) {
-    if (!resolve_sym("cpu_current_top_of_stack", (void **)&ktos_offset)) {
-      printf("failed to resolve cpu_current_top_of_stack\n");
-      assert(0);
-    }
-  }
-  return ktos_offset;
-}
 
 static inline unsigned long get_exc_page_fault_addr()
 {
@@ -105,49 +77,6 @@ int heaptouch(void)
   free((void*)data);
   
   return sum;
-}
-
-struct acquire_exclusive_cpu_thunk_args {
-  int cpu;
-  int killifneeded;
-};
-
-void * acquire_exclusive_cpu_thunk(void *args) {
-  struct acquire_exclusive_cpu_thunk_args *arg = args;
-  long cpu = arg->cpu;
-  int  kin = arg->killifneeded;
-  
-  return (void *)acquire_exclusive_cpu(cpu, kin);
-}
-
-void * release_exclusive_cpu_thunk(void *args) {
-  long cpu = (long)args;
-  release_exclusive_cpu(cpu);
-  return NULL;
-}
-
-void evacuate(int acquire)
-{
-  int rc=0;
-  unsigned int cpu;
-
-  assert(getcpu(&cpu, NULL)==0);
-  
-  if (acquire) {
-    struct acquire_exclusive_cpu_thunk_args args =
-      {.cpu = cpu, .killifneeded = EVAC_KILL_NICELY };
-    sym_elevate();
-    rc = (long)stack_switch_kcall(ktos(), acquire_exclusive_cpu_thunk, &args);
-    symbi_fast_lower();
-    printf("acquire_exclusive_cpu: %d\n", rc);
-  } else {
-    sym_elevate();
-    rc = (long)stack_switch_kcall(ktos(), release_exclusive_cpu_thunk, (void *)((long)cpu));
-    symbi_fast_lower();
-    printf("release_exclusive_cpu:\n");
-  }
-  
-  assert(rc==0);
 }
 
 unsigned int counter = 0;
@@ -233,7 +162,7 @@ int main(int argc, char **argv) {
   unsigned long cr3=0xdeadbeefdeadbeef;
   unsigned long df_cnt=0, pf_cnt=0;
   
-  if (evac) evacuate(1);
+  if (evac) kcut_evacuate(1);
   
   sym_elevate();
   
@@ -373,7 +302,7 @@ int main(int argc, char **argv) {
 
   symbi_fast_lower();
 
-  if (evac) evacuate(0);
+  if (evac) kcut_evacuate(0);
 
   printf("\t%d: ELEVATED TESTS: END\n", mypid);  
   printf("%d: BASIC KCUT TESTS: END\n", mypid);

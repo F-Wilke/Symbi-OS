@@ -1,15 +1,8 @@
 #ifndef __KCUT_TCPMSG_KH__
 
-
 struct iovec;
 
-typedef struct kcut_tcp_args {
-  int fd;
-  struct iovec *iov;
-} kcut_tcp_args_t;
-
-long kcut_tcp_recvmsg_ker(kcut_tcp_args_t* args);
-long kcut_tcp_sendmsg_ker(kcut_tcp_args_t* args);
-
+int kcut_tcp_recvmsg(int fd, struct iovec *iov);
+int kcut_tcp_sendmsg(int fd, struct iovec *iov);
 
 #endif  // __KCUT_TCPMSG_KH__

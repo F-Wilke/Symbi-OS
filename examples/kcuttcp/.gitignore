@@ -1,0 +1,8 @@
+esrv
+eclnt
+kcut_bpbs_esrv
+kcut_cpbs_esrv
+kcut_bpcs_esrv
+kcut_cpcs_esrv
+*.o
+*~
