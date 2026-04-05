@@ -8,16 +8,23 @@
  * build: gcc -O2 -o echoserver echoserver.c
  * test:  nc localhost 8080
  */
-
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
+#include <sched.h>
 #include <fcntl.h>
 #include <arpa/inet.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
+
+#ifdef KCUT_TCP
+// uncomment next line or pass -D EVACUATE at compile to turn on evacution
+#define EVACUATE
+#include "kcut/kcut_tcpmsg.h"
+#endif
 
 #define PORT       8080
 #define BACKLOG    128
@@ -71,6 +78,10 @@ int main(void)
     struct epoll_event events[MAX_EVENTS];
     char buf[BUF_SIZE];
 
+#ifdef KCUT_TCP
+    kcut_init();
+#endif
+    
     for (;;) {
         int n = epoll_wait(epfd, events, MAX_EVENTS, -1);
         if (n == -1) {
@@ -126,8 +137,11 @@ int main(void)
 
                 /* drain the socket completely (required with EPOLLET) */
                 for (;;) {
+#ifndef KCUT_TCP
                     ssize_t nr = read(fd, buf, sizeof buf);
-
+#else
+		    ssize_t nr = kcut_tcp_read(fd, buf, sizeof buf);
+#endif
                     if (nr == -1) {
                         if (errno == EAGAIN || errno == EWOULDBLOCK)
                             break;           /* fully drained */
@@ -144,7 +158,11 @@ int main(void)
                     /* echo: write everything back */
                     ssize_t sent = 0;
                     while (sent < nr) {
+#ifndef KCUT_TCP		      
                         ssize_t nw = write(fd, buf + sent, nr - sent);
+#else
+			ssize_t nw = kcut_tcp_write(fd, buf + sent, nr - sent);
+#endif
                         if (nw == -1) {
                             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                                 /* NOTE: production code should buffer the
@@ -167,6 +185,10 @@ int main(void)
         }
     }
 
+#ifdef KCUT_TCP
+    kcut_cleanup();
+#endif
+      
     close(epfd);
     close(lfd);
     return 0;

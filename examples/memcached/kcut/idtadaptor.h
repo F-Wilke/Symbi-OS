@@ -1,1 +1,0 @@
-../../kcuttest/idtadaptor.h

@@ -1,12 +1,12 @@
 diff --git a/src/Makefile b/src/Makefile
-index 55cc15847..5867c7d18 100644
+index 55cc15847..b2f932d1a 100644
 --- a/src/Makefile
 +++ b/src/Makefile
 @@ -380,6 +380,8 @@ else
      endef
  endif
  
-+FINAL_CFLAGS+=-I../../../../Symlib/include -I../../kcut
++FINAL_CFLAGS+=-I../../../../Symlib/include -I../../kcut $(KCUT_CFLAGS)
 +
  # Determine install/uninstall Redis symlinks for compatibility when
  # installing/uninstalling Valkey binaries (defaulting to `yes`)
@@ -23,69 +23,19 @@ index 55cc15847..5867c7d18 100644
  # Valkey static library, used to compile against for unit testing
  $(ENGINE_LIB_NAME): $(ENGINE_SERVER_OBJ)
 diff --git a/src/server.c b/src/server.c
-index 838459336..e841e1b5c 100644
+index 838459336..9923af4e5 100644
 --- a/src/server.c
 +++ b/src/server.c
-@@ -79,6 +79,15 @@
+@@ -79,6 +79,8 @@
  #include <sys/mman.h>
  #endif
  
-+#include <dlfcn.h>
-+#include <assert.h>
-+#include <inttypes.h>
-+
-+#include "kernel.h"
-+#include "evacuate.kh"
-+#include "LINF/sym_all.h"
-+#include "L1/stack_switch.h"
++#include "../../kcut/kcut.h"
 +
  #if defined(HAVE_SYSCTL_KIPC_SOMAXCONN) || defined(HAVE_SYSCTL_KERN_SOMAXCONN)
  #include <sys/sysctl.h>
  #endif
-@@ -7135,12 +7144,52 @@ int iAmPrimary(void) {
-             (server.cluster_enabled && clusterNodeIsPrimary(getMyClusterNode())));
- }
- 
-+#ifdef EVACUATE
-+static inline int
-+resolve_sym(char *name, void **value)
-+{
-+  char *error;
-+  dlerror();  // clear as per manpage
-+  *value = dlsym(RTLD_DEFAULT, name);
-+  error = dlerror();
-+  if (error != NULL) {
-+    fprintf(stderr, "%s\n", error);
-+    return 0;
-+  }
-+  return 1;
-+}
-+
-+
-+static void evacuate()
-+{
-+  uintptr_t ktos;
-+  int rc;
-+  unsigned int cpu;
-+
-+  assert(getcpu(&cpu, NULL)==0);
-+  
-+  if (!resolve_sym("cpu_current_top_of_stack", (void **)&ktos)) {
-+    printf("failed to resolve cpu_current_top_of_stack\n");
-+    assert(0);
-+  }
-+
-+  SYM_ON_KERN_STACK_DYNSYM_DO(ktos, 
-+			      rc=acquire_exclusive_cpu(cpu,EVAC_KILL_NICELY));
-+
-+  printf("acquire_exclusive_cpu: %d\n", rc);
-+  
-+  assert(rc==0);
-+}
-+#endif
-+
- /* Main is marked as weak so that unit tests can use their own main function. */
- __attribute__((weak)) int main(int argc, char **argv) {
+@@ -7140,7 +7142,9 @@ __attribute__((weak)) int main(int argc, char **argv) {
      struct timeval tv;
      int j;
      char config_from_stdin = 0;
@@ -96,24 +46,21 @@ index 838459336..e841e1b5c 100644
      /* We need to initialize our libraries, and the server configuration. */
  #ifdef INIT_SETPROCTITLE_REPLACEMENT
      spt_init(argc, argv);
-@@ -7440,9 +7489,14 @@ __attribute__((weak)) int main(int argc, char **argv) {
- 
+@@ -7441,8 +7445,12 @@ __attribute__((weak)) int main(int argc, char **argv) {
      serverSetCpuAffinity(server.server_cpulist);
      setOOMScoreAdj(-1);
--
-+#ifndef BRACKET_PRIV
-+    sym_elevate(); // Not tightly bracketing privilege, elevating for duration of program
-+#endif
+ 
++    kcut_init();
++
      aeMain(server.el);
      aeDeleteEventLoop(server.el);
-+#ifndef BRACKET_PRIV
-+    symbi_fast_lower(); // if not bracketing privilege, lower before exiting
-+#endif
++    
++    kcut_cleanup();
      return 0;
  }
  
 diff --git a/src/socket.c b/src/socket.c
-index 336b250cc..856ac5f76 100644
+index 336b250cc..3c086ee5c 100644
 --- a/src/socket.c
 +++ b/src/socket.c
 @@ -155,12 +155,15 @@ static void connSocketClose(connection *conn) {
@@ -127,7 +74,7 @@ index 336b250cc..856ac5f76 100644
      debugServerAssert(!(conn->flags & CONN_FLAG_ALLOW_ACCEPT_OFFLOAD) || !inMainThread() ||
                        ((client *)connGetPrivateData(conn))->io_write_state != CLIENT_PENDING_IO);
 +    
-+    int ret = kcut_tcp_sendmsg(conn->fd, (void *)data, data_len);
++    int ret = kcut_tcp_write(conn->fd, (void *)data, data_len);
  
 -    int ret = write(conn->fd, data, data_len);
      if (ret < 0 && errno != EAGAIN) {
@@ -141,7 +88,7 @@ index 336b250cc..856ac5f76 100644
 -
 -    int ret = read(conn->fd, buf, buf_len);
 +    
-+    int ret = kcut_tcp_recvmsg(conn->fd, buf, buf_len);
++    int ret = kcut_tcp_read(conn->fd, buf, buf_len);
 +    
      if (!ret) {
          conn->state = CONN_STATE_CLOSED;
