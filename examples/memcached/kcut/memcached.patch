@@ -1,12 +1,20 @@
 diff --git a/Makefile.am b/Makefile.am
-index a7a11ad..68438b8 100644
+index a7a11ad..87989df 100644
 --- a/Makefile.am
 +++ b/Makefile.am
-@@ -92,11 +92,12 @@ memcached_debug_SOURCES = $(memcached_SOURCES)
- memcached_CPPFLAGS = -DNDEBUG
+@@ -88,15 +88,18 @@ if ENABLE_TLS
+ memcached_SOURCES += tls.c tls.h
+ endif
+ 
++KCUT_FINAL_FLAGS = -I../../../Symlib/include -I../kcut $(KCUT_CFLAGS)
++
+ memcached_debug_SOURCES = $(memcached_SOURCES)
+-memcached_CPPFLAGS = -DNDEBUG
++memcached_CPPFLAGS = -DNDEBUG $(KCUT_FINAL_FLAGS)
  memcached_debug_LDADD = @PROFILER_LDFLAGS@
- memcached_debug_CFLAGS = @PROFILER_FLAGS@
-+AM_CFLAGS =  -I../../../Symlib/include -I../kcut
+-memcached_debug_CFLAGS = @PROFILER_FLAGS@
++memcached_debug_CFLAGS = @PROFILER_FLAGS@ $(KCUT_FINAL_FLAGS)
++
  
  memcached_LDADD =
  memcached_LDFLAGS =
@@ -16,30 +24,31 @@ index a7a11ad..68438b8 100644
  memcached_debug_DEPENDENCIES =
  CLEANFILES=
  
-@@ -131,7 +132,7 @@ memcached_debug_LDADD += vendor/liburing/src/liburing.a
- endif
+@@ -132,6 +135,10 @@ endif
  
  memcached_debug_CFLAGS += -DMEMCACHED_DEBUG
--
-+memcached_LDADD +=  -L ../kcut -lc -lextension  ../../../Symlib/build/L1/L1.a -lkallsyms
+ 
++KCUT_LD_FLAGS =  -L ../kcut -lc -lextension  ../../../Symlib/build/L1/L1.a -lkallsyms
++memcached_debug_LDADD += $(KCUT_LD_FLAGS)
++memcached_LDADD += $(KCUT_LD_FLAGS)
++
  # build fails on Darwin with const signature replacements.
  if DARWIN
  memcached_dtrace.h: memcached_dtrace.d
 diff --git a/memcached.c b/memcached.c
-index 1858d02..1215e3b 100644
+index 1858d02..308c589 100644
 --- a/memcached.c
 +++ b/memcached.c
-@@ -61,6 +61,9 @@
+@@ -61,6 +61,8 @@
  #include <sys/sysctl.h>
  #endif
  
-+#include "LINF/sym_all.h"
-+#include "../kcut/kcut_tcpmsg.h"
++#include "kcut_tcpmsg.h"
 +
  /*
   * forward declarations
   */
-@@ -126,10 +129,13 @@ enum transmit_result {
+@@ -126,10 +128,13 @@ enum transmit_result {
      TRANSMIT_HARD_ERROR  /** Can't write (c->state is set to conn_closing) */
  };
  
@@ -49,23 +58,23 @@ index 1858d02..1215e3b 100644
      assert (c != NULL);
 -    return read(c->sfd, buf, count);
 +
-+    int ret = kcut_tcp_recvmsg(c->sfd, buf, count);
++    int ret = kcut_tcp_read(c->sfd, buf, count);
 +    return ret;
  }
  
  ssize_t tcp_sendmsg(conn *c, struct msghdr *msg, int flags) {
-@@ -139,7 +145,9 @@ ssize_t tcp_sendmsg(conn *c, struct msghdr *msg, int flags) {
+@@ -139,7 +144,9 @@ ssize_t tcp_sendmsg(conn *c, struct msghdr *msg, int flags) {
  
  ssize_t tcp_write(conn *c, void *buf, size_t count) {
      assert (c != NULL);
 -    return write(c->sfd, buf, count);
 +
-+    int ret = kcut_tcp_sendmsg(c->sfd, buf, count);
++    int ret = kcut_tcp_write(c->sfd, buf, count);
 +    return ret;
  }
  
  static enum transmit_result transmit(conn *c);
-@@ -4692,6 +4700,8 @@ static int _mc_meta_load_cb(const char *tag, void *ctx, void *data) {
+@@ -4692,6 +4699,8 @@ static int _mc_meta_load_cb(const char *tag, void *ctx, void *data) {
      return reuse_mmap;
  }
  
@@ -74,7 +83,7 @@ index 1858d02..1215e3b 100644
  int main (int argc, char **argv) {
      int c;
      bool lock_memory = false;
-@@ -6010,6 +6020,7 @@ int main (int argc, char **argv) {
+@@ -6010,6 +6019,7 @@ int main (int argc, char **argv) {
          settings.proxy_ctx = proxy_init(settings.proxy_uring, settings.proxy_memprofile);
      }
  #endif
@@ -82,7 +91,7 @@ index 1858d02..1215e3b 100644
  #ifdef EXTSTORE
      memcached_thread_init(settings.num_threads, storage);
      init_lru_crawler(storage);
-@@ -6179,7 +6190,6 @@ int main (int argc, char **argv) {
+@@ -6179,7 +6189,6 @@ int main (int argc, char **argv) {
  
      /* Initialize the uriencode lookup table. */
      uriencode_init();
@@ -90,7 +99,7 @@ index 1858d02..1215e3b 100644
      /* enter the event loop */
      while (!stop_main_loop) {
          if (event_base_loop(main_base, EVLOOP_ONCE) != 0) {
-@@ -6187,7 +6197,6 @@ int main (int argc, char **argv) {
+@@ -6187,7 +6196,6 @@ int main (int argc, char **argv) {
              break;
          }
      }
@@ -99,35 +108,38 @@ index 1858d02..1215e3b 100644
          case GRACE_STOP:
              fprintf(stderr, "Gracefully stopping\n");
 diff --git a/thread.c b/thread.c
-index 9ddbefe..0380c7d 100644
+index 9ddbefe..648d0b9 100644
 --- a/thread.c
 +++ b/thread.c
 @@ -501,6 +501,7 @@ static void setup_thread(LIBEVENT_THREAD *me) {
      thread_io_queue_add(me, IO_QUEUE_NONE, NULL, NULL);
  }
  
-+#include "LINF/sym_all.h"
++#include "kcut.h"
  /*
   * Worker thread: main event loop
   */
-@@ -521,6 +522,10 @@ static void *worker_libevent(void *arg) {
+@@ -521,6 +522,13 @@ static void *worker_libevent(void *arg) {
      }
  
      register_thread_initialized();
-+#ifndef BRACKET_PRIV
-+    sym_elevate();
++
++#ifdef EVACUATE
++    evacuate(); // Evacuate core
 +#endif
++
++    kcut_init();
 +
      while (!event_base_got_exit(me->base)) {
          event_base_loop(me->base, EVLOOP_ONCE);
          // Run IO queues after the event loop to catch things like
-@@ -532,6 +537,9 @@ static void *worker_libevent(void *arg) {
+@@ -532,6 +540,9 @@ static void *worker_libevent(void *arg) {
          }
  #endif
      }
-+#ifndef BRACKET_PRIV
-+    symbi_fast_lower();
-+#endif
++    
++    kcut_cleanup();
++
      // same mechanism used to watch for all threads exiting.
      register_thread_initialized();
  

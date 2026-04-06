@@ -1,7 +1,27 @@
 .PHONY: clean distclean
+TARGETS=memcached/memcached-cpcs memcached/memcached-bpcs memcached/memcached-cpbs memcached/memcached-bpbs
 
-memcached/memcached: kcut/extension.a memcached/Makefile
-	make -C memcached memcached
+all: $(TARGETS)
+
+memcached/memcached-cpcs: kcut/extension.a memcached/Makefile
+	make -C memcached clean
+	make -j -C memcached KCUT_CFLAGS=''
+	mv memcached/memcached $@
+
+memcached/memcached-bpcs: kcut/extension.a memcached/Makefile
+	make -C memcached clean
+	make -j -C memcached KCUT_CFLAGS='-D BRACKET_PRIV'
+	mv memcached/memcached $@
+
+memcached/memcached-cpbs: kcut/extension.a memcached/Makefile
+	make -C memcached clean
+	make -j -C memcached KCUT_CFLAGS='-D BRACKET_STACK'
+	mv memcached/memcached $@
+
+memcached/memcached-bpbs: kcut/extension.a memcached/Makefile
+	make -C memcached clean
+	make -j -C memcached KCUT_CFLAGS='-D BRACKET_PRIV -D BRACKET_STACK'
+	mv memcached/memcached $@
 
 kcut/extension.a:
 	make -C kcut
@@ -20,6 +40,7 @@ kcut/memcached.patch:memcached/Makefile.am memcached/memcached.c
 clean:
 	make -C kcut clean
 	make -C memcached clean
+	-${RM} -rf $(wildcard $(TARGETS))
 
 distclean: clean
 	-${RM} -rf $(wildcard memcached)

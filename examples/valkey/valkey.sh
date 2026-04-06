@@ -13,6 +13,17 @@ KALLSYMLIB=${KALLSYMSPATH}/libkallsyms.so
 VALKEYCONFIG=${VALKEYPATH}/valkey.conf
 VALKEYSERVER=${VALKEYPATH}/valkey/src/valkey-server
 
+#check first arguments, append to VALKEYSERVER if exists
+[[ -n $1 ]] && VALKEYSERVER="$VALKEYSERVER-$1"
+
+#define variable that holds all other arguments, except the first one
+VALKEYARGS=""
+for arg in "$@"; do
+    if [[ "$arg" != "$1" ]]; then
+        VALKEYARGS="$VALKEYARGS $arg"
+    fi
+done
+
 [[ ! -d $SYMBIPATH ]] && {
     echo "ERROR: you are not in a subdir of Symbi-OS"
     exit -1
@@ -42,9 +53,8 @@ VALKEYSERVER=${VALKEYPATH}/valkey/src/valkey-server
      exit -1
  }
 
-echo "RUNNING: sudo LD_DEBUG=files LD_LIBRARY_PATH=${KALLSYMSPATH} $VALKEYSERVER $VALKEYCONFIG $@" > /dev/stderr
+echo "RUNNING: sudo LD_DEBUG=files LD_LIBRARY_PATH=${KALLSYMSPATH} $VALKEYSERVER $VALKEYCONFIG $VALKEYARGS" > /dev/stderr
 
 [[ -n $GDB ]] && GDB="$GDB --args"
 
-sudo LD_DEBUG=files LD_LIBRARY_PATH=${KALLSYMSPATH} $GDB  $VALKEYSERVER $VALKEYCONFIG $@
-
+sudo LD_DEBUG=files LD_LIBRARY_PATH=${KALLSYMSPATH} $GDB  $VALKEYSERVER $VALKEYCONFIG $VALKEYARGS
