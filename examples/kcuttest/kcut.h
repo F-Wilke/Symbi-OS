@@ -15,7 +15,7 @@
 #include "evacuate.h"
 #endif
 
-#ifndef  BRACKET_PRIV //FW: Ndef -> we want to elevate on init if we have CONSTANT privilege
+#ifdef  BRACKET_PRIV
 #define ELEVATE_ME() sym_elevate();
 #define LOWER_ME() symbi_fast_lower();  
 #else
@@ -28,7 +28,9 @@ static inline void kcut_init(void)
 #ifdef EVACUATE
   kcut_evacuate(1);
 #endif
-  ELEVATE_ME();
+#ifndef BRACKET_PRIV
+  sym_elevate();
+#endif
 }
 
 static inline void kcut_cleanup(void)
@@ -36,7 +38,9 @@ static inline void kcut_cleanup(void)
 #ifdef EVACUATE
   kcut_evacuate(0);
 #endif
-  LOWER_ME();
+#ifndef BRACKET_PRIV
+  symbi_fast_lower();
+#endif
 }
 
 #endif
