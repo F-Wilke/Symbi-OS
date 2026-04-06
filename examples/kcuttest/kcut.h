@@ -15,7 +15,7 @@
 #include "evacuate.h"
 #endif
 
-#ifdef  BRACKET_PRIV
+#ifndef  BRACKET_PRIV //FW: Ndef -> we want to elevate on init if we have CONSTANT privilege
 #define ELEVATE_ME() sym_elevate();
 #define LOWER_ME() symbi_fast_lower();  
 #else
