@@ -1,0 +1,26 @@
+#!/bin/bash
+scriptdir=$(dirname $(realpath $0))
+interp=${KLDSO:-${scriptdir}/kld.so}
+binary=$1
+
+[[ ! -a $interp ]] && {
+    echo "ERROR: can't find interpreter: $interp" >&2
+    exit -1
+}
+
+[[ -z $binary ]] && {
+    echo "USAGE: $0 <binary>" >&2
+    echo "       sets the interpreter specified binary to $interp"
+    exit 0
+}
+
+echo -n "current interpters for $binary: "
+
+if patchelf --print-interpreter $binary; then
+    patchelf --set-interpreter $interp $binary
+    echo -n "now: "
+    patchelf --print-interpreter $binary
+fi
+
+
+    
