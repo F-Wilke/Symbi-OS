@@ -1,3 +1,4 @@
 *~
 .ext/
 libextension.a
+.gdb_history
