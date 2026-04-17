@@ -1,0 +1,11 @@
+#!/bin/bash
+# Temporarily allow BPF link creation
+sudo setenforce 0
+
+# Create instance and load
+sudo mkdir -p /sys/kernel/tracing/instances/mod_logs
+sudo bpftool prog load modlogger.bpf.o /sys/fs/bpf/modlogger
+
+# Re-enable the tracepoints in the instance
+echo 1 | sudo tee /sys/kernel/tracing/instances/mod_logs/events/module/module_load/enable
+echo 1 | sudo tee /sys/kernel/tracing/instances/mod_logs/events/module/module_free/enable
