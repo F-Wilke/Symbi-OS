@@ -185,9 +185,15 @@ int GBLSInit(int argc, char **argv)
 {
   int opt;
 
-  // zero out objects to ensure cleanup is safe at any point
-  memset(&GBLS.fs, 0, sizeof(GBLS.fs));
-  memset(&GBLS.sigproc, 0, sizeof(GBLS.sigproc));
+  // init objects to ensure cleanup is safe at any point
+  assert(fsInit(&GBLS.fs,
+		false,   // init mount point
+		NULL,    // mount point prefix
+		true));  // zero out and reset all fields
+
+  // This is a kludge but I don't want to rewrite sigprocInit
+  sigprocReset(&(GBLS.sigproc),
+	       true);    // zero out and reset all fields
   
   if (getcwd(GBLS.cwd, sizeof(GBLS.cwd)) == NULL) {
     fprintf(stderr, "ERROR: failed to get cwd\n");
@@ -233,7 +239,7 @@ int GBLSInit(int argc, char **argv)
     assert(fsInit(&GBLS.fs,
 		  true,   // init mount point
 		  NULL,   // mount point prefix
-		  true)); // zero out all other fields
+		  false)); // all ready done
     sigprocInit(&(GBLS.sigproc), true);
   }
   return 0;

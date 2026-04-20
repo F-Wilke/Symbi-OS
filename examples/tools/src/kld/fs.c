@@ -1,11 +1,5 @@
 #include "incs.h"
 
-#include "event.h"
-#include "fs.h"
-#include "sig.h"
-#include "globals.h"
-#include "misc.h"
-
 /************ MISC SUPPORT CODE DIRECTLY TAKEN FROM FUSE EXAMPLE CODE **********
  * the next two functions are directly taken from the fuse example code to
  * send a data back to the fuse kernel module.... these may require work

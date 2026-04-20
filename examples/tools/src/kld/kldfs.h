@@ -3,6 +3,6 @@
 
 extern void kldfsCreate(fs_t *fs, fs_ino_t rootino);
 extern bool kldfsLoop(fs_t *fs, sigproc_t *sigproc);
-extern void sigprocInit(sigproc_t *this, bool iszeroed);
+
 
 #endif // __KLDFS_H__

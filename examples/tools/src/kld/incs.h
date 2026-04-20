@@ -25,7 +25,7 @@
 #include "event.h"
 #include "uthash.h"
 #include "fs.h"
-#include "sig.h"
+#include "sigproc.h"
 #include "globals.h"
 #include "misc.h"
 #include "elf.h"
