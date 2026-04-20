@@ -20,5 +20,16 @@
 #include <err.h>
 #include <stdbool.h>
 #include <assert.h>
+#include <libgen.h>
+
+#include "event.h"
+#include "uthash.h"
+#include "fs.h"
+#include "sig.h"
+#include "globals.h"
+#include "misc.h"
+#include "elf.h"
+#include "kldfs.h"
+
 
 #endif

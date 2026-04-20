@@ -19,8 +19,8 @@ sigAddTermSignals(sigset_t *mask)
 
 typedef struct signalprocessor {
   evntdesc_t  ed;
-  int         sfd;
   sigset_t    mask;
+  int         sfd;
 } sigproc_t;
 
 #endif 

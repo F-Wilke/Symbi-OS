@@ -1,6 +1,6 @@
-SRCS       := main.c fs.c elf.c
+SRCS       := main.c kldfs.c fs.c elf.c
 OBJS       := $(SRCS:%.c=%.o)
-O          := 2
+O          := 0
 CFLAGS     += -g -O${O} -std=gnu99 -MD -MP -Wall -Werror $(shell pkg-config fuse3 --cflags)
 TARGETS    := kld readsymtbl listlibs stubstest
 UTHASHREPO := git@github.com:troydhanson/uthash.git

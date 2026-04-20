@@ -1,91 +1,271 @@
 #include "incs.h"
 
-#include "event.h"
-#include "uthash.h"
-#include "fs.h"
-#include "sig.h"
-#include "globals.h"
-#include "misc.h"
-#include "elf.h"
-
-#include <libgen.h>
-
 globals_t GBLS = {
-  .fsname         = "libk",
-  .pathprefix     = "libk",
-  .koc            = 0,
-  .komax          = 0,
-  .kos            = NULL,
+  .bos            = NULL,
+  .executable     = NULL,
+  .botblfile      = KOTBL_DFLT,
+  .dirs           = NULL,
+  .fsname         = FSNAME_DFLT,
+  .pathprefix     = PATHPREFIX_DFLT,
+  .pid            = 0,
+  .dirc           = 0,
+  .dirmax         = 0,
   .verbose        = 0,
   .startfs        = 0,
-  .mkkallsymslibs = 1,
-  .mkkolibs       = 1,
-  .pid            = 0
+  .prockallsyms   = 1,
+  .procbos        = 1
 };
-
-
-static void addko(char *name)
-{
-  if (GBLS.koc == GBLS.komax) {
-    GBLS.komax = (GBLS.komax) ? (GBLS.komax * 2) : 256;
-    GBLS.kos   = realloc(GBLS.kos, GBLS.komax * sizeof(char *));
-  }
-  ko_t *ko = &GBLS.kos[GBLS.koc];
-  ko->ko   = optarg;
-  ko->dir  = -1;
-  ko->fd   = -1;
-  GBLS.koc++;
-}
-
-static int
-addkodir(char *dir)
-{
-  struct stat sb;
-
-  if (stat(dir, &sb) == 0 && S_ISDIR(sb.st_mode)) {
-    if (GBLS.kodirc == GBLS.kodirmax) {
-      GBLS.kodirmax = (GBLS.kodirmax) ? (GBLS.kodirmax * 2) : 256;
-      GBLS.kodirs   = realloc(GBLS.kodirs, GBLS.kodirmax * sizeof(char *));
-    }
-    GBLS.kodirs[GBLS.kodirc] = dir;
-    GBLS.kodirc++;
-  } else {
-    fprintf(stderr, "%s does not exist\n", dir);
-    return -1;
-  }
-  return GBLS.kodirc;
-}
 
 static void
 usage(char *name, FILE *fp)
 {
   fprintf(fp,
-	  "%s [-h] [-v] [-N] [-K dir] [-k kofile] [elf]\n"
+	  "%s [-h] [-v] [-N] [-K dir] [-k kofile] [-o kotblfile] [elf]\n"
 	  "   -h     : print this usage message\n"
 	  "   -v     : verbose operation\n"
-	  "   -N     : supress creating shared libraries from symbols in /proc/kallsysms\n"
-	  "   -K dir : add a directory to search for ko files (can be repeated)\n"
-	  "   -k ko  : create a shared libk library for the ko (can be repeated)\n"
+	  "   -N     : supress creating shared libraries from symbols in"
+	  " /proc/kallsysms\n"
+	  "   -K dir : add a directory to search for ko files"
+	  " (can be repeated)\n"
+	  "   -k ko  : create a shared libk library for the ko "
+	  "(can be repeated)\n"
+	  "   -o kotblfile: file to output binary kotbl (default: %s)\n"
 	  "   elf    : optional elf file to process as follows:\n"
 	  "              For each libk found in the elf:\n"
 	  "                 find coresponding ko and load it\n"
-	  "                 update the libk symbol table with runtime addresses\n"
+	  "                 update the libk symbol table with runtime"
+	  " addresses\n"
 	  "              For each ko found in the elf:\n"
 	  "                 extract ko and load\n"
-	  "                 update the libk symbol table with runtime addresses\n",
-	  basename(name));
+	  "                 update the libk symbol table with runtime"
+	  " addresses\n",
+	  basename(name), KOTBL_DFLT);
+}
+
+
+
+#if 0
+static int
+parsekospec(const char kospec, char **path, char **kldopts, char **name)
+{
+  char *tmp = strdup(kospec)
+  *kopath    = tmp;
+  for (int i=0; tmp[i]!=0; i++) {
+    if (tmp[i] = ',') {
+      // found a comma
+      tmp[i] = '\0';
+      commas++;
+      if (commas==1) {
+	// first comma
+	kokldopts = tmp[i+1]; // record start
+      } else if (commas==2) {
+	koname = &kospec[i+1];  // record start 
+      } else {
+	fprintf(stderr, "ERROR: bad ko specification: %s\n", orig);
+	rc = -1;
+	goto done;
+      }
+    }
+  }
+
+  switch (commas) {
+  case 0:
+    koname    = konamefrompath(kopath);
+    kokldopts = strdup(DEFAULT_KLDOPTS);
+    break;
+  case 1:
+    koname    = strdup(koname);
+    kokldopts = strdup(DEFAULT_KLDOPTS);
+    break;
+  case 2:
+    koname    = strdup(koname);
+    kokldopts = strdup(kokdopts);
+  }
+  
+
 }
 
 static int
-openkallsyms(FILE **fp) {
-  FILE      *fp_;
-  fp_ = fopen("/proc/kallsyms", "r");
-  if (fp_ == NULL) {
-    warn(__FUNCTION__);
+addbo(const char *kospec)
+{
+  struct bo_t *bo;
+  int          commas    = 0;
+  char        *path    = NULL;
+  char        *kldopts = NULL;
+  char        *name    = NULL;
+
+  if (parsekospec(kospec, &path, &kldopts, &name) < 0) {
     return -1;
-  }  
-  *fp    = fp_;
+  }
+  
+  HASH_FIND_STR(GLBS.bos, name, bo);
+
+  if (bo) {
+    fprintf("WARNING: %s already specified ignoring %s\n", name, kospec)
+      return -1;
+  }
+  
+  bo = malloc(sizeof(ko_t));
+
+  strlen(name);
+  bo->kofnm  = path;
+  ko->modnm  = name;
+  ko->kldopts = kldopts;
+  
+  ko->dir     = -1;
+  ko->fd      = -1;
+  
   return 0;
+}
+
+
+int
+openko(ko_t *ko)
+{
+  int fd, i;
+  char fullpath[PATH_MAX];
+  
+  for (i=0; i<GBLS.kodirc; i++) {
+    snprintf(fullpath, PATH_MAX, "%s/%s", GBLS.kodirs[i], ko->ko);
+    fd = open(fullpath, O_RDONLY);
+    if (fd != -1) break;
+  }
+  if (fd != -1) {
+    ko->fd  = fd;
+    ko->dir = i;
+    VPRINT("Found %s in %s (%d).\n", ko->ko, GBLS.kodirs[ko->dir], ko->dir);
+  }
+  return fd;
+}
+
+
+static void
+mkkolib(ko_t *ko)
+{
+  char  sopath[PATH_MAX];
+  char  kopath[PATH_MAX];
+  char *kobn = basename(ko->ko);
+  char *tmpstr = strdup(kobn);
+  int   i;
+  
+  for (i=0; tmpstr[i]!='\0'; i++);
+  if (i>3 || tmpstr[i-3]!='.' || tmpstr[i-2]!='k' || tmpstr[i-1]!='o') {
+    tmpstr[i-3]='\0';
+  }
+  snprintf(sopath,PATH_MAX,"%s/lib%s.so", GBLS.kodirs[ko->dir], tmpstr);
+  snprintf(kopath,PATH_MAX,"%s/%s", GBLS.kodirs[ko->dir], kobn);
+  free(tmpstr);
+  
+  VPRINT("%s -> %s\n",  kopath, sopath);
+}
+#endif 
+
+
+static int
+addDir(char *dir)
+{
+  struct stat sb;
+
+  if (stat(dir, &sb) == 0 && S_ISDIR(sb.st_mode)) {
+    if (GBLS.dirc == GBLS.dirmax) {
+      GBLS.dirmax = (GBLS.dirmax) ? (GBLS.dirmax << 1) : 256;
+      GBLS.dirs   = realloc(GBLS.dirs, GBLS.dirmax * sizeof(char *));
+    }
+    GBLS.dirs[GBLS.dirc] = dir;
+    GBLS.dirc++;
+  } else {
+    fprintf(stderr, "%s does not exist\n", dir);
+    return -1;
+  }
+  return GBLS.dirc;
+}
+
+
+int GBLSInit(int argc, char **argv)
+{
+  int opt;
+
+  // zero out objects to ensure cleanup is safe at any point
+  memset(&GBLS.fs, 0, sizeof(GBLS.fs));
+  memset(&GBLS.sigproc, 0, sizeof(GBLS.sigproc));
+  
+  if (getcwd(GBLS.cwd, sizeof(GBLS.cwd)) == NULL) {
+    fprintf(stderr, "ERROR: failed to get cwd\n");
+    return -1;
+  }
+  addDir(GBLS.cwd);
+  
+  while ((opt = getopt(argc, argv, "K:k:Nhv")) != -1) {
+    switch (opt) {
+    case 'K':
+      addDir(optarg);
+      break;
+    case 'N':
+      GBLS.prockallsyms = 0;
+      break;
+    case 'h':
+      usage(argv[0],stderr);
+      return -1;
+    case 'k':
+      //addko(optarg);
+      break;
+    case 'v':
+      GBLS.verbose++;
+      break;
+    default:
+      usage(argv[0],stderr);
+      return -1;
+    }
+  }
+
+#if 0  
+  HASH_ITER()
+    openko(ko);
+    if (ko->fd<0) {
+      fprintf(stderr, "ERROR: could not open %s\n", ko->ko);
+      return -1;
+    }
+  }
+#endif
+
+  if (GBLS.startfs) {
+    GBLS.pid = getpid();
+    assert(fsInit(&GBLS.fs,
+		  true,   // init mount point
+		  NULL,   // mount point prefix
+		  true)); // zero out all other fields
+    sigprocInit(&(GBLS.sigproc), true);
+  }
+  return 0;
+}
+
+void
+cleanupEntries(SymbolEntry *entries, ssize_t n)
+{
+  for (int i=0; i<n; i++) free(entries[i].name);
+  free(entries);
+}
+
+static void
+writeso(const char *path, const SymbolEntry *entries, ssize_t n,
+	 size_t nmstrlen)
+{
+  int mfd;
+  size_t elf_size;
+  void *elf_ptr = elf_generate_elf_mmap(entries, n, nmstrlen, &elf_size, &mfd);
+  
+  if (elf_ptr != MAP_FAILED) {
+    VPRINT("%s: ELF mapped at %p (Size: %zu)\n", path, elf_ptr, elf_size);
+    
+    // Example: Write the mapped buffer to a file
+    int dfd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    write(dfd, elf_ptr, elf_size);
+    close(dfd);
+    
+    // Cleanup mapping
+    munmap(elf_ptr, elf_size);
+    close(mfd);
+  }
 }
 
 int
@@ -130,370 +310,16 @@ initSE(SymbolEntry *this, uintptr_t addr, char *name, char type)
     assert(0);
     rc = -1;
   }
+  
   if (rc>=0) {
     this->name = strdup(name);
     this->addr = addr;
+  } else {
+    this->name = NULL;
+    this->addr = 0;
   }
+  this->size   = 0; 
   return rc;
-}
-
-static off_t
-pidSize()
-{
-  char pidstr[24];
-  int pidstrlen;
-  off_t n = 0;
-  pidstrlen = snprintf(pidstr, sizeof(pidstr), "%" PRIdMAX, (intmax_t)GBLS.pid);
-  n = pidstrlen;
-  return n;
-}
-
-static bool
-fs_libkernel_stat(fs_t *this, fs_file_t *file, struct stat *stbuf)
-{
-  VLPRINT(2, "%s %ld: ", file->name, file->ino);
-  stbuf->st_ino = file->ino;
-  stbuf->st_mode = S_IFREG | 0444;
-  stbuf->st_nlink = 1;
-  stbuf->st_size = pidSize();
-  VLPRINT(2, "%ld\n", stbuf->st_size);
-  return true; 
-}
-
-static bool
-fs_libkernel_read(fs_t *this, fs_file_t *file, fuse_req_t req, size_t size,
-			    off_t off)
-{
-  off_t  n = pidSize();
-  char *buf = malloc(n+1);
-  snprintf(buf, n+1, "%" PRIdMAX, (intmax_t)GBLS.pid);
-
-  int rc=fsFuseReplyBufLimited(req, buf, n, off, size);
-  if (rc!=0) fprintf(stderr, "fuse_reply_buf failed: %d", rc);
-    
-  free(buf);
-  return true;
-}
-
-fs_fileops_t fs_libkernel_ops = {
-  .stat    = fs_libkernel_stat,
-  .open    = NULL,
-  .read    = fs_libkernel_read,
-  .write   = NULL,
-  .readdir = NULL 
-};
-
-
-static void
-createfs(fs_t *fs, fs_ino_t rootino)
-{
-  fs_file_t *item;
-  VLPRINT(2, "fs=%p rootino=%ld\n", fs, rootino);
-  item = fsCreatefile(fs, rootino, "libkernel.so", NULL, &fs_libkernel_ops);
-  assert(item);
-}
-
-static evnthdlrrc_t
-sigEvent(void *obj, uint32_t evnts, int epollfd)
-{
-  sigproc_t *this = obj;
-  assert(this == &GBLS.sigproc);
-  int          fd = this->sfd;
-  evnthdlrrc_t rc = EVNT_HDLR_SUCCESS;
-  
-  VLPRINT(3,"START: sigproc: fd:%d evnts:0x%08x\n", fd, evnts);
-  if (evnts & EPOLLIN) {
-    struct signalfd_siginfo fdsi;
-    ssize_t                 s;
-    s = read(fd, &fdsi, sizeof(fdsi));
-    assert(s==sizeof(fdsi));
-    switch (fdsi.ssi_signo) {
-    case SIGALRM:
-    case SIGTERM:
-    case SIGINT:
-    case SIGHUP:
-    case SIGKILL:
-    case SIGUSR1:
-    case SIGVTALRM:
-    case SIGUSR2:
-    case SIGPIPE:
-    case SIGIO:
-      // exit yar if any of this signals occur
-      VPRINT("exiting on signal event %d (%s)\n",
-	     fdsi.ssi_signo, strsignal(fdsi.ssi_signo));
-      rc = EVNT_HDLR_EXIT_LOOP;
-      break;
-    default:
-      EPRINT(stderr, "unknown signal event: %d\n", fdsi.ssi_signo);
-    }
-    evnts = evnts & ~EPOLLIN;
-    if (evnts==0) goto done;
-  }
-  if (evnts & EPOLLHUP) {
-    VLPRINT(2,"EPOLLHUP(%x)\n", EPOLLHUP);
-    evnts = evnts & ~EPOLLHUP;
-    if (evnts==0) goto done;
-  }
-  if (evnts & EPOLLRDHUP) {
-    VLPRINT(2,"EPOLLRDHUP(%x)\n", EPOLLRDHUP);
-    evnts = evnts & ~EPOLLRDHUP;
-    if (evnts==0) goto done;
-  }
-  if (evnts & EPOLLERR) {
-    VLPRINT(2,"EPOLLERR(%x)\n", EPOLLERR);
-    evnts = evnts & ~EPOLLRDHUP;
-    if (evnts==0) goto done;
-  }
-  if (evnts != 0) {
-    VLPRINT(2,"unknown events evnts:%x", evnts);
-  }
- done:
-  VLPRINT(3, "END: sigproc: fd:%d evnts:0x%08x\n", fd, evnts);
-  return rc;
-}
-
-static void
-sigprocRegisterEvents(sigproc_t *this, int epollfd)
-{
-  struct epoll_event ev;
-  ASSERT(this && epollfd != -1);
-  ASSERT(this->sfd != -1 && this->ed.obj == this && this->ed.hdlr == sigEvent);
-  ev.data.ptr = &(this->ed);
-  ev.events  = EPOLLIN | EPOLLET; // Edge
-  if (epoll_ctl(epollfd, EPOLL_CTL_ADD, this->sfd, &ev) == -1 ) {
-      perror("epoll_ctl: this->sffd");
-      assert(0);
-  }    
-}
-
-static void
-sigprocInit(sigproc_t *this, bool iszeroed)
-{
-  if (!iszeroed) bzero(this, sizeof(*this));
-  this->sfd = -1;
-  this->ed  = (evntdesc_t){ .obj = this, .hdlr=sigEvent }; 
-
-  sigemptyset(&(this->mask));
-  // block all the signals so that we avoid standard signal handling
-  // behavior --> we will use a signal fd to convert them into events
-  sigAddTermSignals(&(this->mask));
-  
-  assert(sigprocmask(SIG_BLOCK, &(this->mask), NULL)!=-1);
-
-  this->sfd = signalfd(-1, &(this->mask), SFD_CLOEXEC|SFD_NONBLOCK);
-  assert(this->sfd != -1); 
-}
-
-static void
-sigprocCleanup(sigproc_t *this)
-{
-  VPRINT("%p\n", this);
-  if (this->sfd != -1) {
-    close(this->sfd);
-    this->sfd = -1;
-    sigemptyset(&this->mask);
-  }
-}
-
-void cleanup(void)
-{
-  fsCleanup(&(GBLS.fs));
-  sigprocCleanup(&(GBLS.sigproc));
-}
-
-int
-openko(ko_t *ko)
-{
-  int fd, i;
-  char fullpath[PATH_MAX];
-  
-  for (i=0; i<GBLS.kodirc; i++) {
-    snprintf(fullpath, PATH_MAX, "%s/%s", GBLS.kodirs[i], ko->ko);
-    fd = open(fullpath, O_RDONLY);
-    if (fd != -1) break;
-  }
-  if (fd != -1) {
-    ko->fd  = fd;
-    ko->dir = i;
-    VPRINT("Found %s in %s (%d).\n", ko->ko, GBLS.kodirs[ko->dir], ko->dir);
-  }
-  return fd;
-}
-
-int GBLSInit(int argc, char **argv)
-{
-  int opt;
-
-  if (getcwd(GBLS.cwd, sizeof(GBLS.cwd)) == NULL) {
-    fprintf(stderr, "ERROR: failed to get cwd\n");
-    return -1;
-  }
-  addkodir(GBLS.cwd);
-  
-  while ((opt = getopt(argc, argv, "K:k:Nhv")) != -1) {
-    switch (opt) {
-    case 'K':
-      addkodir(optarg);
-      break;
-    case 'N':
-      GBLS.mkkallsymslibs = 0;
-      break;
-    case 'h':
-      usage(argv[0],stderr);
-      return -1;
-    case 'k':
-      addko(optarg);
-      break;
-    case 'v':
-      GBLS.verbose++;
-      break;
-    default:
-      usage(argv[0],stderr);
-      return -1;
-    }
-  }
-
-  for (int i=0; i<GBLS.koc; i++) {
-    ko_t *ko = &(GBLS.kos[i]);
-    openko(ko);
-    if (ko->fd<0) {
-      fprintf(stderr, "ERROR: could not open %s\n", ko->ko);
-      return -1;
-    }
-  }
-  
-  if (GBLS.startfs) {
-    GBLS.pid = getpid();
-    assert(fsInit(&GBLS.fs,
-		  true,   // init mount point
-		  NULL,   // mount point prefix
-		  true)); // zero out all other fields
-    sigprocInit(&(GBLS.sigproc), true);
-  }
-  return 0;
-}
-
-
-static bool checkfd(int fd)
-{
-  struct stat sb;
-  if (fstat(fd, &sb) == -1) {
-    fprintf(stderr, "fstat on %d failed errno=%d\n", fd, errno);
-    if (errno == EBADFD) {
-      fprintf(stderr, "EBADFD: %d\n", fd);
-    }
-    return false;
-  }
-  return true;
-}
-
-#define MAX_EVENTS 1024
-// epoll code is based on example from the man page
-static bool
-theLoop()
-{
-  bool rc;
-  int epollfd;
-  // create the kernel event poll object
-  {
-    epollfd = epoll_create1(EPOLL_CLOEXEC);
-    if (epollfd == -1) {
-      perror("epoll_create1");
-      return false;
-    }
-  }
-
-  // switch over to using epoll events for signal handling from now on
-  sigprocRegisterEvents(&GBLS.sigproc, epollfd);
-
-  fsRegisterEvents(&GBLS.fs, epollfd);
-  
-  // loop: detect events and dispatch handlers
-  for (;;) {
-    struct epoll_event events[MAX_EVENTS];
-    errno = 0;
-    int nfds = epoll_wait(epollfd, events, MAX_EVENTS, -1);
-    if (nfds == -1) {
-      if (verbose(1)) perror("epoll_wait");
-      if (errno == EINTR) {
-	// maybe we got a signal we are not handling or something
-	// else made us wakeup ...  log it but just keep on going 
-	VLPRINT(2, "%s: EINTR: Continuing\n", __func__);
-	continue;
-      }
-      if (errno == EINVAL) {
-	// I don't know why this is happening
-	// once we added logging
-	//  trigger -> run yar, ctl-z, bg, enter
-	EPRINT(stderr, "FAIL:errno=%d epollfd=%d ME=%d checkfd=%d\n",
-	       errno, epollfd, MAX_EVENTS, checkfd(epollfd));
-	continue;
-      }
-      rc = false;
-      EPRINT(stderr, "FAIL:errno=%d epollfd=%d ME=%d checkfd=%d\n",
-	     errno, epollfd, MAX_EVENTS, checkfd(epollfd));
-      goto done;
-    }
-    
-    for (int n = 0; n < nfds; ++n) {
-      evnthdlrrc_t erc;
-      evntdesc_t *ed = events[n].data.ptr;
-      uint32_t evnts = events[n].events;
-      assert(ed);
-      VLPRINT(3, "%d/%d: ed:%p (.hdlr=0x%p .obj=Ox%p) evnts:0x%08x\n",
-	      n, nfds, ed, ed->hdlr, ed->obj, evnts);
-      assert(ed->hdlr);
-      // call handler registered for this event source 
-      erc = ed->hdlr(ed->obj, evnts, epollfd);
-      if (erc == EVNT_HDLR_EXIT_LOOP) {
-	VLPRINT(1, "eventhandler returned exiting loop rc"
-		" hdlr:%p obj:0x%p evnts:%08x\n", ed->hdlr, ed->obj, evnts);
-	rc = true;
-	goto done;
-      } else if (erc == EVNT_HDLR_FAILED) {
-	EPRINT(stderr, "event handler failed hdlr:%p obj:0x%p evnts:%08x\n",
-	       ed->hdlr, ed->obj, evnts);
-	rc = false;
-	goto done;
-      }
-    }
-  }
-  
-  // Exit logic
- done:
-  return rc;
-}
-
-static void
-writelib(const char *path, const SymbolEntry *entries, ssize_t n,
-	 size_t nmstrlen)
-{
-  int mfd;
-  size_t elf_size;
-  void *elf_ptr = elf_generate_elf_mmap(entries, n, nmstrlen, &elf_size, &mfd);
-  
-  if (elf_ptr != MAP_FAILED) {
-    VPRINT("%s: ELF mapped at %p (Size: %zu)\n", path, elf_ptr, elf_size);
-    
-    // Example: Write the mapped buffer to a file
-    int dfd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    write(dfd, elf_ptr, elf_size);
-    close(dfd);
-    
-    // Cleanup mapping
-    munmap(elf_ptr, elf_size);
-    close(mfd);
-  }
-}
-
-void
-entcleanup(SymbolEntry *entries, ssize_t n)
-{
-  while (n) {
-    free(entries[n].name);
-    n--;
-  }
-  free(entries);
 }
 
 /** FROM: Gemini
@@ -528,8 +354,21 @@ int mkpath(const char *path, mode_t mode) {
 }
 /****/
 
+static int
+openKallsyms(FILE **fp) {
+  FILE      *fp_;
+  fp_ = fopen("/proc/kallsyms", "r");
+  if (fp_ == NULL) {
+    warn(__FUNCTION__);
+    return -1;
+  }  
+  *fp    = fp_;
+  return 0;
+}
+
+
 static void
-mkkallsymslibs(const char *pathprefix, FILE *fp)
+prcKallsyms(const char *pathprefix, FILE *fp)
 {
   char *       line = NULL;
   size_t       len, nmlen, knmstrlen=0;
@@ -538,11 +377,11 @@ mkkallsymslibs(const char *pathprefix, FILE *fp)
   int          n;
   char         type;
   int          sym_start, sym_end, mod_start, mod_end;
-  char *       name = NULL;
-  char *       module = NULL;
-  ssize_t      ksyms_n = 1024;
-  ssize_t      ksyms_i = 0;
-  SymbolEntry *kentries;
+  char *       name     = NULL;
+  char *       module   = NULL;
+  ssize_t      ksyms_n  = 0;
+  ssize_t      ksyms_i  = 0;
+  SymbolEntry *kentries = NULL;;
   
   struct Module {
     UT_hash_handle hh;
@@ -557,8 +396,6 @@ mkkallsymslibs(const char *pathprefix, FILE *fp)
     fprintf(stderr, "ERROR: %s invalid path.\n", pathprefix);
     return;
   }
-  
-  kentries = malloc(ksyms_n * sizeof(SymbolEntry));
   
   while ((read = getline(&line, &len, fp)) != -1 ) {
     sym_start = sym_end = mod_start = mod_end = 0;
@@ -578,19 +415,25 @@ mkkallsymslibs(const char *pathprefix, FILE *fp)
 	// add symbol to appropriate module symbol entries
 	// printf("%d: addr:0x%" PRIx64 " type:%c symbol:%s module:%s\n",
 	// n, addr, type, name, module);
-	struct Module *mod;
+	struct Module *mod = NULL;
 	HASH_FIND_STR(mhash, module, mod);
 	if (mod==NULL) {
 	  mod           = malloc(sizeof(struct Module));
-	  mod->name     = strdup(module); mod->syms_n = 1024; mod->syms_i = 0;
+	  mod->name     = strdup(module);
+	  mod->syms_n   = 0;
+	  mod->syms_i   = 0;
 	  mod->nmstrlen = 0;
-	  mod->entries  = malloc(mod->syms_n * sizeof(SymbolEntry));
+	  mod->entries  = NULL;
+	  // memset(mod->entries, 0, sizeof(mod->syms_n * sizeof(SymbolEntry)));
 	  HASH_ADD_KEYPTR(hh, mhash, mod->name, strlen(mod->name), mod);
 	}
 	if (mod->syms_i == mod->syms_n) {
-	  mod->syms_n <<= 1;
+	  mod->syms_n = (mod->syms_n) ? mod->syms_n << 1 : 1024;
 	  mod->entries = realloc((void *)mod->entries,
 				 mod->syms_n*sizeof(SymbolEntry));
+	  // for good measure zero out new memory
+	  memset(&(mod->entries[mod->syms_i]), 0,
+		 (mod->syms_n - mod->syms_i) * sizeof(SymbolEntry));
 	}
 	if (initSE(&(mod->entries[mod->syms_i]),addr, name, type)>=0) {
 	  mod->nmstrlen += nmlen;
@@ -601,8 +444,11 @@ mkkallsymslibs(const char *pathprefix, FILE *fp)
 	// printf("%d: addr:0x%" PRIx64 " type:%c symbol:%s\n", n, addr,
 	// type, name);
 	if (ksyms_i == ksyms_n) {
-	  ksyms_n <<= 1;
+	  ksyms_n = (ksyms_n) ? ksyms_n << 1 : 1024;
 	  kentries = realloc((void *)kentries, ksyms_n*sizeof(SymbolEntry));
+	  // for good measure zero out new memory
+	  memset(&(kentries[ksyms_i]), 0,
+		 (ksyms_n - ksyms_i) * sizeof(SymbolEntry));
 	}
 	if (initSE(&kentries[ksyms_i],addr, name, type)>=0) {
 	  knmstrlen += nmlen;
@@ -619,8 +465,8 @@ mkkallsymslibs(const char *pathprefix, FILE *fp)
     } else {
       snprintf(path, sizeof(path), "libkern.so");
     }
-    writelib(path, kentries, ksyms_i, knmstrlen);
-    entcleanup(kentries, ksyms_i);
+    writeso(path, kentries, ksyms_i, knmstrlen);
+    cleanupEntries(kentries, ksyms_i);
   }
   
   {
@@ -632,8 +478,8 @@ mkkallsymslibs(const char *pathprefix, FILE *fp)
       } else {
 	snprintf(path, sizeof(path), "lib%s.so", mod->name);
       }
-      writelib(path, mod->entries, mod->syms_i, mod->nmstrlen);
-      entcleanup(mod->entries, mod->syms_i);
+      writeso(path, mod->entries, mod->syms_i, mod->nmstrlen);
+      cleanupEntries(mod->entries, mod->syms_i);
       free(mod->name);
       HASH_DEL(mhash, mod);
       free((struct Module *)mod);
@@ -646,23 +492,45 @@ mkkallsymslibs(const char *pathprefix, FILE *fp)
 }
 
 static void
-mkkolib(ko_t *ko)
+sigprocCleanup(sigproc_t *this)
 {
-  char  sopath[PATH_MAX];
-  char  kopath[PATH_MAX];
-  char *kobn = basename(ko->ko);
-  char *tmpstr = strdup(kobn);
-  int   i;
-  
-  for (i=0; tmpstr[i]!='\0'; i++);
-  if (i>3 || tmpstr[i-3]!='.' || tmpstr[i-2]!='k' || tmpstr[i-1]!='o') {
-    tmpstr[i-3]='\0';
+  VPRINT("%p\n", this);
+  if (this->sfd != -1) {
+    close(this->sfd);
+    this->sfd = -1;
+    sigemptyset(&this->mask);
   }
-  snprintf(sopath,PATH_MAX,"%s/lib%s.so", GBLS.kodirs[ko->dir], tmpstr);
-  snprintf(kopath,PATH_MAX,"%s/%s", GBLS.kodirs[ko->dir], kobn);
-  free(tmpstr);
+}
+
+static void
+bosCleanup()
+{
   
-  VPRINT("%s -> %s\n",  kopath, sopath);
+}
+
+void
+cleanup(void)
+{
+  if (GBLS.startfs)  {
+    fsCleanup(&(GBLS.fs));
+    sigprocCleanup(&(GBLS.sigproc));
+  }
+  
+  if (GBLS.bos) {
+    bosCleanup();
+    GBLS.bos = NULL;
+  }
+  if (GBLS.dirs) {
+    free(GBLS.dirs);
+    GBLS.dirs = NULL;
+  }
+  
+}
+
+static int
+prcExec(char *exec)
+{
+  return 0;
 }
 
 int
@@ -671,28 +539,36 @@ main(int argc, char **argv)
   FILE *ksfp;
   
   if (GBLSInit(argc, argv)<0) {
-    //    usage(argv[0], stderr);
+    usage(argv[0], stderr);
     EEXIT();
   }
 
-  if (GBLS.mkkolibs) {
-    for (int i=0; i<GBLS.koc; i++) {
-      mkkolib(&GBLS.kos[i]);
-    }
+  atexit(cleanup);    // from this point on exits will trigger cleanups
+  
+  if (GBLS.executable) {
+    prcExec(GBLS.executable);
   }
   
-  if (GBLS.mkkallsymslibs) {
-    if (openkallsyms(&ksfp)<0) {
+  if (GBLS.procbos) {
+    //    HASH_ITER() {
+    //      mkboso(bo);
+    //    }
+  }
+
+  // we do this last so that ko loads will be reflected in so updates
+  if (GBLS.prockallsyms) {
+    if (openKallsyms(&ksfp)<0) {
       fprintf(stderr, "ERROR: failed to open kallsyms\n");
       EEXIT();
     }
-    mkkallsymslibs(GBLS.pathprefix, ksfp);
+    prcKallsyms(GBLS.pathprefix, ksfp);
   }
-  
+
+  // optionally expose objects via synthetic filesystem
+  // This support has not been completed.
   if (GBLS.startfs) {
-    if (!fsCreate(&(GBLS.fs), argv[0], createfs)) EEXIT();
-    atexit(cleanup);    // from this point on exits will trigger cleanups   
-    if (!theLoop()) EEXIT();
+    if (!fsCreate(&(GBLS.fs), argv[0], kldfsCreate)) EEXIT();
+    if (!kldfsLoop(&GBLS.fs, &GBLS.sigproc)) EEXIT();
   }
   
   return EXIT_SUCCESS;
