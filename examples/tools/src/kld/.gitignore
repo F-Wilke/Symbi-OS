@@ -1,1 +1,6 @@
 ext
+kld
+listlibs
+mklibstubs
+readsymtbl
+stubstest

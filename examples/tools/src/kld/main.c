@@ -20,7 +20,7 @@ static void
 usage(char *name, FILE *fp)
 {
   fprintf(fp,
-	  "%s [-h] [-v] [-N] [-K dir] [-k kofile] [-o kotblfile] [elf]\n"
+	  "%s [-h] [-v] [-N] [-K dir] [-k kofile[,modnm[,kldopts]]] [-o kotblfile] [elf]\n"
 	  "   -h     : print this usage message\n"
 	  "   -v     : verbose operation\n"
 	  "   -N     : supress creating shared libraries from symbols in"
@@ -42,103 +42,7 @@ usage(char *name, FILE *fp)
 	  basename(name), KOTBL_DFLT);
 }
 
-
-
 #if 0
-static int
-parsekospec(const char kospec, char **path, char **kldopts, char **name)
-{
-  char *tmp = strdup(kospec)
-  *kopath    = tmp;
-  for (int i=0; tmp[i]!=0; i++) {
-    if (tmp[i] = ',') {
-      // found a comma
-      tmp[i] = '\0';
-      commas++;
-      if (commas==1) {
-	// first comma
-	kokldopts = tmp[i+1]; // record start
-      } else if (commas==2) {
-	koname = &kospec[i+1];  // record start 
-      } else {
-	fprintf(stderr, "ERROR: bad ko specification: %s\n", orig);
-	rc = -1;
-	goto done;
-      }
-    }
-  }
-
-  switch (commas) {
-  case 0:
-    koname    = konamefrompath(kopath);
-    kokldopts = strdup(DEFAULT_KLDOPTS);
-    break;
-  case 1:
-    koname    = strdup(koname);
-    kokldopts = strdup(DEFAULT_KLDOPTS);
-    break;
-  case 2:
-    koname    = strdup(koname);
-    kokldopts = strdup(kokdopts);
-  }
-  
-
-}
-
-static int
-addbo(const char *kospec)
-{
-  struct bo_t *bo;
-  int          commas    = 0;
-  char        *path    = NULL;
-  char        *kldopts = NULL;
-  char        *name    = NULL;
-
-  if (parsekospec(kospec, &path, &kldopts, &name) < 0) {
-    return -1;
-  }
-  
-  HASH_FIND_STR(GLBS.bos, name, bo);
-
-  if (bo) {
-    fprintf("WARNING: %s already specified ignoring %s\n", name, kospec)
-      return -1;
-  }
-  
-  bo = malloc(sizeof(ko_t));
-
-  strlen(name);
-  bo->kofnm  = path;
-  ko->modnm  = name;
-  ko->kldopts = kldopts;
-  
-  ko->dir     = -1;
-  ko->fd      = -1;
-  
-  return 0;
-}
-
-
-int
-openko(ko_t *ko)
-{
-  int fd, i;
-  char fullpath[PATH_MAX];
-  
-  for (i=0; i<GBLS.kodirc; i++) {
-    snprintf(fullpath, PATH_MAX, "%s/%s", GBLS.kodirs[i], ko->ko);
-    fd = open(fullpath, O_RDONLY);
-    if (fd != -1) break;
-  }
-  if (fd != -1) {
-    ko->fd  = fd;
-    ko->dir = i;
-    VPRINT("Found %s in %s (%d).\n", ko->ko, GBLS.kodirs[ko->dir], ko->dir);
-  }
-  return fd;
-}
-
-
 static void
 mkkolib(ko_t *ko)
 {
@@ -159,6 +63,136 @@ mkkolib(ko_t *ko)
   VPRINT("%s -> %s\n",  kopath, sopath);
 }
 #endif 
+
+static int
+openko(char *kofnm, char **kofullpath)
+{
+  int fd, i;
+  char fullpath[PATH_MAX];
+  
+  *kofullpath = NULL;
+  for (i=0; i<GBLS.dirc; i++) {
+    snprintf(fullpath, PATH_MAX, "%s/%s", GBLS.dirs[i], kofnm);
+    fd = open(fullpath, O_RDONLY);
+    if (fd != -1) break;
+  }
+  if (fd != -1) {
+    *kofullpath = realpath(fullpath,NULL);
+    VPRINT("Found %s in %s (%d:%s).\n", kofnm, GBLS.dirs[i], i,
+	   *kofullpath);
+  } else {
+    fprintf(stderr, "ERROR: %s not found\n", kofnm);
+  }
+  return fd;
+}
+
+char *modnmfromfnm(char *fnm)
+{
+  char *tmp   = strdup(fnm);
+  char *base  = basename(tmp);
+  char *modnm = NULL;
+  int      i = 0;
+
+  for (i=0; base[i]!='\0'; i++);
+  // remove '.ko' extension 
+  if (i>3 && base[i-3]=='.' && base[i-2]=='k' && base[i-1]=='o') {
+    base[i-3]='\0';
+  }
+  modnm = strdup(base);  // make a copy in new memory to pass back
+  free(tmp);
+  return modnm;
+}
+
+static int
+parsekospec(const char *kospec, char **fnm, char **kldopts, char **modnm)
+{
+  int   commas = 0;
+  char *tmp    = strdup(kospec);
+  char *f, *n, *o;
+  int   rc=0;
+  
+  f = n = o = NULL;
+  
+  f = tmp;
+  for (int i=0; tmp[i]!=0; i++) {
+    if (tmp[i] == ',') {
+      // found a comma
+      tmp[i] = '\0';
+      commas++;
+      if (commas==1) {
+	// first comma
+	n = &(tmp[i+1]); // record start
+      } else if (commas==2) {
+	o = &tmp[i+1];  // record start 
+      } else {
+	fprintf(stderr, "ERROR: bad ko specification: %s\n", kospec);
+	rc = -1;
+	goto done;
+      }
+    }
+  }
+  *fnm = f;
+  switch (commas) {
+  case 0:
+    *modnm   = modnmfromfnm(f);
+    *kldopts = strdup(KLDOPTS_DFLT);
+    break;
+  case 1:
+    *modnm   = (*n == '\0') ? modnmfromfnm(f) : strdup(n);
+    *kldopts = strdup(KLDOPTS_DFLT);
+    break;
+  case 2:
+    *modnm   = (*n == '\0') ? modnmfromfnm(f) : strdup(n);
+    *kldopts = (*o == '\0') ? strdup(KLDOPTS_DFLT) : strdup(o);
+  }
+  
+  VLPRINT(2, "%s: fnm:%s modnm:%s kldopts:%s\n", kospec, *fnm, *modnm, *kldopts);
+done:
+  return rc;
+}
+
+static int
+addbo(const char *kospec)
+{
+  bo_t *bo;
+  char *kofnm, *kldops, *modnm;
+  char *kofullpath;
+  int fd, rc=0;
+
+  kofnm = kldops = modnm = kofullpath = NULL;
+  
+  if (parsekospec(kospec, &kofnm, &kldops, &modnm) < 0) { rc = -1; goto done; }
+  
+  fd = openko(kofnm, &kofullpath);
+  if (fd < 0) { rc = -1; goto done; } 
+  
+  HASH_FIND_STR(GBLS.bos, kofullpath, bo);
+  
+  if (bo) {
+    fprintf(stderr, "WARNING: %s already specified ignoring %s\n",
+	    kofullpath, kospec);
+    rc = -1;
+    goto done;
+  }
+  
+  bo = malloc(sizeof(bo_t));  
+
+  bo->kofnm  = kofullpath;
+  bo->modnm  = modnm;
+  bo->kldops = kldops;
+  bo->kofd   = fd;
+  bo->sofnm  = NULL;
+  bo->sofd   = -1;
+
+  HASH_ADD_KEYPTR(hh, GBLS.bos, bo->kofnm, strlen(bo->kofnm), bo);
+ 
+done:
+  if (kofnm)      free(kofnm);
+  if (rc<0 && kldops)     free(kldops);
+  if (rc<0 && modnm)      free(modnm);
+  if (rc<0 && kofullpath) free(kofullpath);
+  return rc;
+}
 
 
 static int
@@ -184,7 +218,11 @@ addDir(char *dir)
 int GBLSInit(int argc, char **argv)
 {
   int opt;
-
+  char **kospec    = NULL;
+  int    kospecc   = 0;
+  int    kospecmax = 0;
+  int    rc        = 0;;
+  
   // init objects to ensure cleanup is safe at any point
   assert(fsInit(&GBLS.fs,
 		false,   // init mount point
@@ -197,7 +235,8 @@ int GBLSInit(int argc, char **argv)
   
   if (getcwd(GBLS.cwd, sizeof(GBLS.cwd)) == NULL) {
     fprintf(stderr, "ERROR: failed to get cwd\n");
-    return -1;
+    rc=-1;
+    goto done;
   }
   addDir(GBLS.cwd);
   
@@ -213,7 +252,13 @@ int GBLSInit(int argc, char **argv)
       usage(argv[0],stderr);
       return -1;
     case 'k':
-      //addko(optarg);
+      if (kospecc == kospecmax) {
+	kospecmax = (kospecmax) ? kospecmax << 1 : 2;
+	kospec    = realloc(kospec, sizeof(char *)*kospecmax);
+	memset(&kospec[kospecc], 0, kospecmax - kospecc);
+      }
+      kospec[kospecc] = optarg;
+      kospecc++;
       break;
     case 'v':
       GBLS.verbose++;
@@ -224,15 +269,23 @@ int GBLSInit(int argc, char **argv)
     }
   }
 
-#if 0  
-  HASH_ITER()
-    openko(ko);
-    if (ko->fd<0) {
-      fprintf(stderr, "ERROR: could not open %s\n", ko->ko);
-      return -1;
+  if (GBLS.verbose) {
+    VPRINT("%d Directories to searched:\n", GBLS.dirc);
+    for (int i=0; i<GBLS.dirc; i++) {
+      VPRINT("GBLS.dirs[%d]=%s\n", i, GBLS.dirs[i]);
+    }
+    VPRINT("%d Kernel Object specifications:\n", kospecc);
+    for (int i=0; i<kospecc; i++) {
+      VPRINT("kospec[%d]=%s\n", i, kospec[i]);
     }
   }
-#endif
+
+  for (int i=0; i<kospecc; i++) {
+    if (addbo(kospec[i])<0) {
+      rc=-1;
+      goto done;
+    }
+  }
 
   if (GBLS.startfs) {
     GBLS.pid = getpid();
@@ -242,7 +295,10 @@ int GBLSInit(int argc, char **argv)
 		  false)); // all ready done
     sigprocInit(&(GBLS.sigproc), true);
   }
-  return 0;
+  
+done:
+  if (kospec) free(kospec);
+  return rc;
 }
 
 void
@@ -545,7 +601,6 @@ main(int argc, char **argv)
   FILE *ksfp;
   
   if (GBLSInit(argc, argv)<0) {
-    usage(argv[0], stderr);
     EEXIT();
   }
 

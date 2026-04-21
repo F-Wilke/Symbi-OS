@@ -4,6 +4,7 @@
 #define KOTBL_DFLT      "kotbl.bin"
 #define FSNAME_DFLT     "libk"
 #define PATHPREFIX_DFLT "libk"
+#define KLDOPTS_DFLT    "EXCLUSIVE"
 
 // Binary Object
 //   kld works with binary objects that are both represented by
@@ -11,12 +12,11 @@
 //    1) Constructing both as needed
 //    2) At runtime loading ko's and updating so's to reflect load addresses
 typedef struct {
-  UT_hash_handle hh;  
-  char          *kofnm;      // kernel object (ko) file name
-  char          *sofnm;      // share object (so) file name 
+  UT_hash_handle hh;
+  char          *kofnm;      // kernel object (ko) full path canonical file name
+  char          *sofnm;      // share object (so) full path cononical file name 
   char          *modnm;      // module name
-  uint64_t      *kldops;     // kld options
-  int            dir;        // index in directory search array where found
+  char          *kldops;     // kld options
   int            kofd;       // fd of kofnm once opened 
   int            sofd;       // fd of sofnm once opened
 } bo_t; 
