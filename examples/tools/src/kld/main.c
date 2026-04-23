@@ -47,11 +47,11 @@ static int
 openko(char *kofnm, char **kofullpath)
 {
   int fd, i;
-  char fullpath[PATH_MAX];
+  char *fullpath=malloc(PATH_MAX); // avoid large stack alloc
   
   *kofullpath = NULL;
   for (i=0; i<GBLS.dirc; i++) {
-    snprintf(fullpath, sizeof(fullpath), "%s/%s", GBLS.dirs[i], kofnm);
+    snprintf(fullpath, PATH_MAX, "%s/%s", GBLS.dirs[i], kofnm);
     fd = open(fullpath, O_RDONLY|O_CLOEXEC);
     if (fd != -1) break;
   }
@@ -63,6 +63,7 @@ openko(char *kofnm, char **kofullpath)
     fprintf(stderr, "ERROR:%s:%s:%d:%s\n", __func__, kofnm,
 	    errno, strerror(errno));
   }
+  free(fullpath);
   return fd;
 }
 
@@ -71,13 +72,13 @@ openso(char *kofnm, char *modnm, char **sofullpath)
 {
   int fd;
   char *tmp=NULL;
-  char fullpath[PATH_MAX];
+  char *fullpath=malloc(PATH_MAX); // avoid large stack alloc
 
   
   if (kofnm && modnm) {
     tmp = strdup(kofnm);
     char *dir=dirname(tmp);
-    snprintf(fullpath, sizeof(fullpath), "%s/lib%s.so", dir, modnm);
+    snprintf(fullpath, PATH_MAX, "%s/lib%s.so", dir, modnm);
     fd = open(fullpath, O_WRONLY | O_CREAT | O_TRUNC, SOPERM_DFLT);
     if (fd != -1) {
       *sofullpath = strdup(fullpath);
@@ -91,6 +92,7 @@ openso(char *kofnm, char *modnm, char **sofullpath)
   }
 
   if (tmp) free(tmp);
+  free(fullpath);
   return fd;
 }
 
@@ -567,24 +569,25 @@ prcKallsyms(const char *pathprefix, FILE *fp)
   }
   
   if (ksyms_i) {
-    char path[PATH_MAX];
+    char *path=malloc(PATH_MAX);
     if (pathprefix) {
-      snprintf(path, sizeof(path), "%s/libkern.so", pathprefix);
+      snprintf(path, PATH_MAX, "%s/libkern.so", pathprefix);
     } else {
-      snprintf(path, sizeof(path), "libkern.so");
+      snprintf(path, PATH_MAX, "libkern.so");
     }
     writeso(path, -1, kentries, ksyms_i, knmstrlen);
     cleanupEntries(kentries, ksyms_i);
+    free(path);
   }
   
   {
+    char *path=malloc(PATH_MAX);
     const struct Module *mod, *tmp;
     HASH_ITER(hh, mhash, mod, tmp) {
-      char path[PATH_MAX];
       if (pathprefix) {
-	snprintf(path, sizeof(path), "%s/lib%s.so", pathprefix, mod->name);
+	snprintf(path, PATH_MAX, "%s/lib%s.so", pathprefix, mod->name);
       } else {
-	snprintf(path, sizeof(path), "lib%s.so", mod->name);
+	snprintf(path, PATH_MAX, "lib%s.so", mod->name);
       }
       writeso(path, -1, mod->entries, mod->syms_i, mod->nmstrlen);
       cleanupEntries(mod->entries, mod->syms_i);
@@ -592,6 +595,7 @@ prcKallsyms(const char *pathprefix, FILE *fp)
       HASH_DEL(mhash, mod);
       free((struct Module *)mod);
     }
+    free(path);
   }
 
   free(line);

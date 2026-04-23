@@ -75,6 +75,7 @@ static bool checkfd(int fd)
 extern bool
 kldfsLoop(fs_t *fs, sigproc_t *sigproc)
 {
+  struct epoll_event *events=NULL;
   bool rc;
   int epollfd;
   // create the kernel event poll object
@@ -90,10 +91,10 @@ kldfsLoop(fs_t *fs, sigproc_t *sigproc)
   sigprocRegisterEvents(sigproc, epollfd);
 
   fsRegisterEvents(fs, epollfd);
-  
+
+  events = malloc(sizeof(struct epoll_event)*MAX_EVENTS);
   // loop: detect events and dispatch handlers
   for (;;) {
-    struct epoll_event events[MAX_EVENTS];
     errno = 0;
     int nfds = epoll_wait(epollfd, events, MAX_EVENTS, -1);
     if (nfds == -1) {
@@ -144,5 +145,6 @@ kldfsLoop(fs_t *fs, sigproc_t *sigproc)
   
   // Exit logic
  done:
+  if (events) free(events);
   return rc;
 }

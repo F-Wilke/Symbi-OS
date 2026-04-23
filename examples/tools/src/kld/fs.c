@@ -731,17 +731,18 @@ fsSetMntPt(fs_t *this, char *mntpt)
 extern bool
 fsInit(fs_t *this, bool initmntpt, char *mntptdir, bool iszeroed)
 {
-  char tmp[PATH_MAX];
+  char *tmp=malloc(PATH_MAX);
   if (!iszeroed) {
     bzero(this, sizeof(fs_t));
   }
   *this = (fs_t){ .fuse_args = FUSE_ARGS_INIT(0, NULL),
 		  .fuse_fd = -1 };
   if (initmntpt) {
-    if (!fsMountPoint(tmp, sizeof(tmp), mntptdir)) EEXIT();
-    if (!fsSetMntPt(this, tmp)) EEXIT();
+    if (!fsMountPoint(tmp, sizeof(tmp), mntptdir)) { free(tmp);  EEXIT(); }
+    if (!fsSetMntPt(this, tmp)) { free(tmp); EEXIT(); }
   } 
   this->ed = (evntdesc_t){ .obj = this, .hdlr = fsEvent };
+  free(tmp);
   return true;
 }
 
