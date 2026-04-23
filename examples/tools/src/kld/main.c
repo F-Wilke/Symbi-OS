@@ -20,7 +20,8 @@ static void
 usage(char *name, FILE *fp)
 {
   fprintf(fp,
-	  "%s [-h] [-v] [-N] [-K dir] [-k kofile[,modnm[,kldopts]]] [-o kotblfile] [elf]\n"
+	  "%s [-h] [-v] [-N] [-K dir] [-k kofile[,modnm[,kldopts]]] "
+	  "[-o kotblfile] [elf]\n"
 	  "   -h     : print this usage message\n"
 	  "   -v     : verbose operation\n"
 	  "   -N     : supress creating shared libraries from symbols in"
@@ -42,28 +43,6 @@ usage(char *name, FILE *fp)
 	  basename(name), KOTBL_DFLT);
 }
 
-#if 0
-static void
-mkkolib(ko_t *ko)
-{
-  char  sopath[PATH_MAX];
-  char  kopath[PATH_MAX];
-  char *kobn = basename(ko->ko);
-  char *tmpstr = strdup(kobn);
-  int   i;
-  
-  for (i=0; tmpstr[i]!='\0'; i++);
-  if (i>3 || tmpstr[i-3]!='.' || tmpstr[i-2]!='k' || tmpstr[i-1]!='o') {
-    tmpstr[i-3]='\0';
-  }
-  snprintf(sopath,PATH_MAX,"%s/lib%s.so", GBLS.kodirs[ko->dir], tmpstr);
-  snprintf(kopath,PATH_MAX,"%s/%s", GBLS.kodirs[ko->dir], kobn);
-  free(tmpstr);
-  
-  VPRINT("%s -> %s\n",  kopath, sopath);
-}
-#endif 
-
 static int
 openko(char *kofnm, char **kofullpath)
 {
@@ -72,21 +51,51 @@ openko(char *kofnm, char **kofullpath)
   
   *kofullpath = NULL;
   for (i=0; i<GBLS.dirc; i++) {
-    snprintf(fullpath, PATH_MAX, "%s/%s", GBLS.dirs[i], kofnm);
-    fd = open(fullpath, O_RDONLY);
+    snprintf(fullpath, sizeof(fullpath), "%s/%s", GBLS.dirs[i], kofnm);
+    fd = open(fullpath, O_RDONLY|O_CLOEXEC);
     if (fd != -1) break;
   }
   if (fd != -1) {
     *kofullpath = realpath(fullpath,NULL);
-    VPRINT("Found %s in %s (%d:%s).\n", kofnm, GBLS.dirs[i], i,
-	   *kofullpath);
+    VPRINT("Found %s in %s (%d:%s) fd:%d.\n", kofnm, GBLS.dirs[i], i,
+	   *kofullpath, fd);
   } else {
-    fprintf(stderr, "ERROR: %s not found\n", kofnm);
+    fprintf(stderr, "ERROR:%s:%s:%d:%s\n", __func__, kofnm,
+	    errno, strerror(errno));
   }
   return fd;
 }
 
-char *modnmfromfnm(char *fnm)
+static int
+openso(char *kofnm, char *modnm, char **sofullpath)
+{
+  int fd;
+  char *tmp=NULL;
+  char fullpath[PATH_MAX];
+
+  
+  if (kofnm && modnm) {
+    tmp = strdup(kofnm);
+    char *dir=dirname(tmp);
+    snprintf(fullpath, sizeof(fullpath), "%s/lib%s.so", dir, modnm);
+    fd = open(fullpath, O_WRONLY | O_CREAT | O_TRUNC, SOPERM_DFLT);
+    if (fd != -1) {
+      *sofullpath = strdup(fullpath);
+      VPRINT("opened so:%s for ko:%s fd:%d\n", *sofullpath, modnm, fd);
+    } else {
+      fprintf(stderr, "ERROR:%s:%s:%d:%s\n", __func__, kofnm,
+	      errno, strerror(errno));
+    }
+  } else {
+    fd = -1;
+  }
+
+  if (tmp) free(tmp);
+  return fd;
+}
+
+static char
+*modnmfromfnm(char *fnm)
 {
   char *tmp   = strdup(fnm);
   char *base  = basename(tmp);
@@ -151,20 +160,57 @@ done:
   return rc;
 }
 
+static bo_t *
+newbo(char *kofullpath, char *modnm, char *kldopts, int kofd,
+      char *sofullpath, int sofd)
+{
+  bo_t *bo = malloc(sizeof(bo_t));  
+  bo->kofnm   = kofullpath;
+  bo->modnm   = modnm;
+  bo->kldopts = kldopts;
+  bo->kofd    = kofd;
+  bo->sofnm   = sofullpath;
+  bo->sofd    = sofd;
+  return bo;
+}
+
+__attribute__((unused)) static void
+deletebo(bo_t *bo)
+{
+  if (bo) {
+    if (bo->kofnm)     free(bo->kofnm);
+    if (bo->sofnm)     free(bo->sofnm);
+    if (bo->modnm)     free(bo->modnm);
+    if (bo->kldopts)   free(bo->kldopts);
+    if (bo->kofd >= 0) close(bo->kofd);
+    if (bo->sofd >= 0) close(bo->sofd);
+  }
+}
+
+static void
+dumpbo(bo_t *bo)
+{
+  EPRINT(stderr, "bo:%p mod:%s kldopts:%s ko:%s (%d) so:%s (%d)\n",
+	 bo, bo->modnm, bo->kldopts, bo->kofnm, bo->kofd, bo->sofnm, bo->sofd);
+}
+
 static int
 addbo(const char *kospec)
 {
-  bo_t *bo;
-  char *kofnm, *kldops, *modnm;
-  char *kofullpath;
-  int fd, rc=0;
+  bo_t *bo=NULL;
+  char *kofnm, *kldopts, *modnm;
+  char *kofullpath, *sofullpath; 
+  int   kofd=-1, sofd=-1, rc=0;
 
-  kofnm = kldops = modnm = kofullpath = NULL;
+  kofnm = kldopts = modnm = kofullpath = sofullpath = NULL;
   
-  if (parsekospec(kospec, &kofnm, &kldops, &modnm) < 0) { rc = -1; goto done; }
+  if (parsekospec(kospec, &kofnm, &kldopts, &modnm) < 0) { rc = -1; goto done; }
   
-  fd = openko(kofnm, &kofullpath);
-  if (fd < 0) { rc = -1; goto done; } 
+  kofd = openko(kofnm, &kofullpath);
+  if (kofd < 0) { rc = -1; goto done; } 
+
+  sofd = openso(kofullpath, modnm, &sofullpath);
+  if (sofd < 0) { rc = -1; goto done; }
   
   HASH_FIND_STR(GBLS.bos, kofullpath, bo);
   
@@ -174,26 +220,24 @@ addbo(const char *kospec)
     rc = -1;
     goto done;
   }
-  
-  bo = malloc(sizeof(bo_t));  
 
-  bo->kofnm  = kofullpath;
-  bo->modnm  = modnm;
-  bo->kldops = kldops;
-  bo->kofd   = fd;
-  bo->sofnm  = NULL;
-  bo->sofd   = -1;
-
+  bo = newbo(kofullpath, modnm, kldopts, kofd, sofullpath, sofd);
   HASH_ADD_KEYPTR(hh, GBLS.bos, bo->kofnm, strlen(bo->kofnm), bo);
- 
+
+  if (GBLS.verbose>1) {
+    VPRINT("Added ob: %d total obs:\n", HASH_COUNT(GBLS.bos));
+    dumpbo(bo);
+  }
 done:
-  if (kofnm)      free(kofnm);
-  if (rc<0 && kldops)     free(kldops);
+  if (kofnm)              free(kofnm);
+  if (rc<0 && kofd != -1) close(kofd);
+  if (rc<0 && sofd != -1) close(sofd);
+  if (rc<0 && kldopts)    free(kldopts);
   if (rc<0 && modnm)      free(modnm);
   if (rc<0 && kofullpath) free(kofullpath);
+  if (rc<0 && sofullpath) free(sofullpath);
   return rc;
 }
-
 
 static int
 addDir(char *dir)
@@ -214,8 +258,8 @@ addDir(char *dir)
   return GBLS.dirc;
 }
 
-
-int GBLSInit(int argc, char **argv)
+static int
+GBLSInit(int argc, char **argv)
 {
   int opt;
   char **kospec    = NULL;
@@ -301,7 +345,7 @@ done:
   return rc;
 }
 
-void
+static void
 cleanupEntries(SymbolEntry *entries, ssize_t n)
 {
   for (int i=0; i<n; i++) free(entries[i].name);
@@ -309,10 +353,11 @@ cleanupEntries(SymbolEntry *entries, ssize_t n)
 }
 
 static void
-writeso(const char *path, const SymbolEntry *entries, ssize_t n,
+writeso(const char *path, int fd, const SymbolEntry *entries, ssize_t n,
 	 size_t nmstrlen)
 {
   int mfd;
+  int dfd=fd;
   size_t elf_size;
   void *elf_ptr = elf_generate_elf_mmap(entries, n, nmstrlen, &elf_size, &mfd);
   
@@ -320,9 +365,11 @@ writeso(const char *path, const SymbolEntry *entries, ssize_t n,
     VPRINT("%s: ELF mapped at %p (Size: %zu)\n", path, elf_ptr, elf_size);
     
     // Example: Write the mapped buffer to a file
-    int dfd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd==-1) {
+      dfd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    } 
     write(dfd, elf_ptr, elf_size);
-    close(dfd);
+    if (fd == -1) close(dfd);
     
     // Cleanup mapping
     munmap(elf_ptr, elf_size);
@@ -330,7 +377,7 @@ writeso(const char *path, const SymbolEntry *entries, ssize_t n,
   }
 }
 
-int
+static int
 initSE(SymbolEntry *this, uintptr_t addr, char *name, char type)
 {
   int rc = 0;
@@ -417,7 +464,8 @@ int mkpath(const char *path, mode_t mode) {
 /****/
 
 static int
-openKallsyms(FILE **fp) {
+openKallsyms(FILE **fp)
+{
   FILE      *fp_;
   fp_ = fopen("/proc/kallsyms", "r");
   if (fp_ == NULL) {
@@ -428,29 +476,27 @@ openKallsyms(FILE **fp) {
   return 0;
 }
 
-
 static void
 prcKallsyms(const char *pathprefix, FILE *fp)
 {
   char *       line = NULL;
   size_t       len, nmlen, knmstrlen=0;
-  ssize_t      read;
   uintptr_t    addr;
   int          n;
   char         type;
   int          sym_start, sym_end, mod_start, mod_end;
   char *       name     = NULL;
   char *       module   = NULL;
-  ssize_t      ksyms_n  = 0;
-  ssize_t      ksyms_i  = 0;
+  size_t       ksyms_n  = 0;
+  size_t       ksyms_i  = 0;
   SymbolEntry *kentries = NULL;;
   
   struct Module {
     UT_hash_handle hh;
     SymbolEntry   *entries;
     char          *name;
-    ssize_t        syms_n;
-    ssize_t        syms_i;
+    size_t         syms_n;
+    size_t         syms_i;
     size_t         nmstrlen;
   } * mhash = NULL;
 
@@ -459,7 +505,7 @@ prcKallsyms(const char *pathprefix, FILE *fp)
     return;
   }
   
-  while ((read = getline(&line, &len, fp)) != -1 ) {
+  while (getline(&line, &len, fp) != -1 ) {
     sym_start = sym_end = mod_start = mod_end = 0;
     name = module = NULL;
     n = sscanf(line, "%" SCNx64 " %c %n%*s%n %n%*s%n", &addr, &type,
@@ -527,7 +573,7 @@ prcKallsyms(const char *pathprefix, FILE *fp)
     } else {
       snprintf(path, sizeof(path), "libkern.so");
     }
-    writeso(path, kentries, ksyms_i, knmstrlen);
+    writeso(path, -1, kentries, ksyms_i, knmstrlen);
     cleanupEntries(kentries, ksyms_i);
   }
   
@@ -540,7 +586,7 @@ prcKallsyms(const char *pathprefix, FILE *fp)
       } else {
 	snprintf(path, sizeof(path), "lib%s.so", mod->name);
       }
-      writeso(path, mod->entries, mod->syms_i, mod->nmstrlen);
+      writeso(path, -1, mod->entries, mod->syms_i, mod->nmstrlen);
       cleanupEntries(mod->entries, mod->syms_i);
       free(mod->name);
       HASH_DEL(mhash, mod);
@@ -570,7 +616,7 @@ bosCleanup()
   
 }
 
-void
+static void
 cleanup(void)
 {
   if (GBLS.startfs)  {
@@ -587,6 +633,30 @@ cleanup(void)
     GBLS.dirs = NULL;
   }
   
+}
+
+static int
+prcBO(bo_t *bo)
+{
+  int i=0, rc=0;
+  SymbolEntry *entries = NULL;
+  size_t       n, nmstrlen;
+  
+  if (GBLS.verbose) {
+    VPRINT("Processing ko (%d):\n",i);
+    dumpbo(bo);
+    i++;
+  }
+  if (elf_read_syms(bo->kofnm, bo->kofd, &entries, &n, &nmstrlen)<0) {
+    rc = -1;
+    goto done;
+  }
+  writeso(bo->sofnm, bo->sofd, entries, n, nmstrlen);
+  VPRINT("%s: read %lu symbols\n", bo->kofnm, n);
+
+ done:
+  if (entries) cleanupEntries(entries,n);
+  return rc;
 }
 
 static int
@@ -609,11 +679,14 @@ main(int argc, char **argv)
   if (GBLS.executable) {
     prcExec(GBLS.executable);
   }
-  
+
+  // process each of the bo's found either from command line or
+  // from the executable
   if (GBLS.procbos) {
-    //    HASH_ITER() {
-    //      mkboso(bo);
-    //    }
+    bo_t *bo, *tmp;
+    HASH_ITER(hh, GBLS.bos, bo, tmp) {
+      prcBO(bo);
+    }
   }
 
   // we do this last so that ko loads will be reflected in so updates

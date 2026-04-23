@@ -25,14 +25,21 @@ size_t add_str(StrTab *st, const char *s) {
 
 // Returns a memory-mapped pointer to the ELF data
 extern void* elf_generate_elf_mmap(const SymbolEntry *entries, int count,
-				   size_t nmstrlen,   // length total length of name strings
-				   size_t *out_size, int *out_fd) {
-    int mfd = memfd_create("elf_mmap", MFD_CLOEXEC);
-    if (mfd < 0) { perror("memfd_create"); return NULL; }
-
-    elf_version(EV_CURRENT);
-    Elf *elf = elf_begin(mfd, ELF_C_WRITE, NULL);
-    gelf_newehdr(elf, ELFCLASS64);
+				   size_t nmstrlen,   
+				   size_t *out_size, int *out_fd)
+{
+  void *map = NULL; 
+  int mfd = memfd_create("elf_mmap", MFD_CLOEXEC);
+  if (mfd < 0) { perror("memfd_create"); return NULL; }
+  
+  elf_version(EV_CURRENT);
+  Elf *elf = elf_begin(mfd, ELF_C_WRITE, NULL);
+  if (elf == NULL) {
+    close(mfd);
+    fprintf(stderr, "ERROR: elf_begin failed\n");
+    return map;
+  } 
+  gelf_newehdr(elf, ELFCLASS64);
 
     // [ ... String table and Section logic remains the same ... ]
     const char *sec_names[] = {
@@ -60,7 +67,7 @@ extern void* elf_generate_elf_mmap(const SymbolEntry *entries, int count,
     nmstrlen++; // add for initial manditory null byte at start of a string table
     StrTab sym_st = { calloc(1, nmstrlen), 0 };
     add_str(&sym_st, ""); // set index 0 to '\0'
-    size_t sym_offsets[count];
+    size_t *sym_offsets = malloc(sizeof(size_t)*count);
     for(int i=0; i<count; i++) sym_offsets[i] = add_str(&sym_st, entries[i].name);
 
     GElf_Shdr sh;
@@ -172,63 +179,58 @@ extern void* elf_generate_elf_mmap(const SymbolEntry *entries, int count,
     // 2. Mmap the file descriptor instead of reading
     off_t size = lseek(mfd, 0, SEEK_END);
     *out_size = (size_t)size;
-    void *map = mmap(NULL, *out_size, PROT_READ, MAP_PRIVATE, mfd, 0);
+    map = mmap(NULL, *out_size, PROT_READ, MAP_PRIVATE, mfd, 0);
     
     // We return the FD so the caller can close it after munmap, 
     // or we can close it here (the mapping remains valid).
     *out_fd = mfd;
 
     // Local Cleanup
+    free(sym_offsets);
     free(sh_st.buf); free(sym_st.buf); free(sym_table);
     free(h_buf); free(dyn_data);
 
     return map;
 }
 
-#if 0
-static void SEinit(SymbolEntry *e, int *nmstrlen,
+
+static void seInit(SymbolEntry *e, Elf *elf, size_t *nmstrlen,
 		   const GElf_Shdr *shdr,
 		   const GElf_Sym *sym)
 {
   char *name = elf_strptr(elf, shdr->sh_link, sym->st_name);
   e->name    = strdup(name);
-  *nmstrlen += strlen(e->name);
-  e->addr    = (sym.st_shndx == SHN_UNDEF) ? 0 : e->addr = sym.st_value;
+  *nmstrlen += strlen(e->name)+1; // +1 for null
+  e->addr    = (sym->st_shndx == SHN_UNDEF) ? 0 : sym->st_value;
   e->size    = 0;   // default 0
-  
-  e->bind;
-  e->type;
+  e->bind = BIND_GLOBAL;
+  e->type = TYPE_ABS;
 }
 
 extern int
-elf_read_syms(const char *path, const SymbolEntry **entries, size_t *nmstrlen)
+elf_read_syms(const char *path, int fd, SymbolEntry **entries, size_t *n,
+	      size_t *nmstrlen)
 {
-  Elf     *  elf;
-  Elf_Scn *  scn  = NULL;
-  GElf_Shdr  shdr;
-  Elf_Data * data;
-  int        fd;
-  int        rc   = 0;
-  int        emax = 0;
-  int        ei   = 0;
+  Elf         *elf  = NULL;
+  Elf_Scn     *scn  = NULL;
+  GElf_Shdr   shdr;
+  Elf_Data    *data;
+  SymbolEntry *ents = NULL;
+  int          rc   = 0;
+  int          emax = 0;
+  int          ei   = 0;
   
   elf_version(EV_CURRENT);
-  fd = open(path, O_RDONLY);
-  if (fd==-1) {
-    fprintf(stderr, "ERROR: open %s: %s\n", path, strerror(errno));
-    rc = -1;
-    goto exit;
-  }
   elf = elf_begin(fd, ELF_C_READ, NULL);
   if (elf==NULL) {
     fprintf(stderr, "ERROR: elf_begin: failed\n");
     rc = -1;
-    goto exit;
+    goto done;
   }
   if (elf_kind(elf) != ELF_K_ELF) {
     fprintf(stderr, "ERROR: %s: Not a valid ELF file.\n", path);
     rc = -1;
-    goto exit;
+    goto done;
   }
 
   assert(*entries == NULL);
@@ -247,22 +249,21 @@ elf_read_syms(const char *path, const SymbolEntry **entries, size_t *nmstrlen)
 	if (sym.st_name == 0 && sym.st_value == 0) continue;
 
 	if (ei == emax) {
-	  emax     = (emax > 0) ? emax << 1 : 1024;
-	  *entries = realloc((void *)*entries, emax * sizeof(SymbolEntry));
+	  emax = (emax > 0) ? emax << 1 : 1024;
+	  ents = realloc(ents, emax * sizeof(SymbolEntry));
 	}
-	SymbolEntry *ei = (SymbolEntry *)&((*entries)[ei])
-	seInit(ei, nmstrlen, shdr, sym); 
+	SymbolEntry *e = &ents[ei];
+	seInit(e, elf, nmstrlen, &shdr, &sym); 
 	ei++;
       }
     }
   }
- exit:
+ done:
   if (elf) elf_end(elf);
-  if (fd != -1) close(fd);
+  *entries = ents;
+  *n = ei;
   return rc;
 }
-
-#endif
 
 #ifdef MAIN
 

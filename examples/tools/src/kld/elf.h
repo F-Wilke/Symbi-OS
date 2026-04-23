@@ -17,7 +17,10 @@ typedef struct {
     SymType  type;
 } SymbolEntry;
 
-extern void *elf_generate_elf_mmap(const SymbolEntry *entries, int count, size_t strlen,
+extern void *elf_generate_elf_mmap(const SymbolEntry *entries, int count,
+				   size_t strlen,
 				   size_t *out_size, int *out_fd);
+extern int   elf_read_syms(const char *path, int fd, SymbolEntry **entries,
+			   size_t *n, size_t *nmstrlen);
 
 #endif
