@@ -3,7 +3,7 @@
 globals_t GBLS = {
   .bos            = NULL,
   .executable     = NULL,
-  .botblfile      = KOTBL_DFLT,
+  .kotblfile      = KOTBL_DFLT,
   .dirs           = NULL,
   .fsname         = FSNAME_DFLT,
   .pathprefix     = PATHPREFIX_DFLT,
@@ -333,6 +333,15 @@ GBLSInit(int argc, char **argv)
     }
   }
 
+
+  int anum=argc-optind;
+  char **args=&(argv[optind]);
+    
+  if (anum >= 1) {
+    GBLS.executable = args[0];
+    VLPRINT(2, "GBLS.executable=%s\n", GBLS.executable);
+  }
+  
   if (GBLS.startfs) {
     GBLS.pid = getpid();
     assert(fsInit(&GBLS.fs,
@@ -617,7 +626,12 @@ sigprocCleanup(sigproc_t *this)
 static void
 bosCleanup()
 {
-  
+  bo_t *bo, *tmp;
+  HASH_ITER(hh, GBLS.bos, bo, tmp) {
+    HASH_DEL(GBLS.bos, bo);
+    deletebo(bo);
+    free(bo);
+  }
 }
 
 static void
@@ -664,9 +678,18 @@ prcBO(bo_t *bo)
 }
 
 static int
-prcExec(char *exec)
+prcExec(const char *exec)
 {
-  return 0;
+  SectionData sd;
+  int rc = 0;
+  
+  rc = elf_open_secdata(&sd, exec, -1, KOTBL_SEC);
+  if (rc>=0) {
+    VLPRINT(2, "%s:%s mapped\n", exec, KOTBL_SEC);
+    elf_close_secdata(&sd);
+  }
+  
+  return rc;
 }
 
 int
@@ -686,12 +709,20 @@ main(int argc, char **argv)
 
   // process each of the bo's found either from command line or
   // from the executable
-  if (GBLS.procbos) {
+  if (GBLS.procbos && HASH_COUNT(GBLS.bos)) {
+    FILE *kotblf = fopen(GBLS.kotblfile, "w");
+    if (kotblf == NULL) {
+      perror("Error opening file");
+      return EXIT_FAILURE;
+    }
     bo_t *bo, *tmp;
     HASH_ITER(hh, GBLS.bos, bo, tmp) {
       prcBO(bo);
+      fprintf(kotblf, "%s,%s\n", bo->kofnm, bo->kldopts);
     }
+    fclose(kotblf);
   }
+  
 
   // we do this last so that ko loads will be reflected in so updates
   if (GBLS.prockallsyms) {

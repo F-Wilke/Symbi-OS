@@ -1,16 +1,15 @@
 // THE BASE VERSION OF THIS CODE WAS PRODUCED WITH Google GEMINI 3 FLASH
 #define _GNU_SOURCE
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-#include <fcntl.h>
+#include <stdio.h>
 #include <unistd.h>
+#include <stdlib.h>
+#include <fcntl.h>
+#include <assert.h>
+#include <errno.h>
 #include <sys/mman.h>
-#include <sys/stat.h>
 #include <libelf.h>
 #include <gelf.h>
-#include <errno.h>
-#include <assert.h>
 
 #include "elf.h"
 
@@ -263,6 +262,115 @@ elf_read_syms(const char *path, int fd, SymbolEntry **entries, size_t *n,
   *entries = ents;
   *n = ei;
   return rc;
+}
+
+extern int
+elf_open_secdata(SectionData *sd, const char *path, int fd, const char *scnm)
+{
+  GElf_Shdr shdr;
+  size_t shstrndx;
+  Elf *elf       = NULL;
+  Elf_Scn *scn   = NULL;
+  Elf_Data *data = NULL;
+  int rc         = 0;
+  int sfd        = fd;
+
+  
+  if (!path || !scnm || !sd) {
+    return -1;
+  }
+
+  // Initialize to zero
+  sd->data = NULL;
+  sd->size = 0;
+  sd->elf = NULL;
+  sd->fd = -1;
+  
+  // Initialize libelf
+  if (elf_version(EV_CURRENT) == EV_NONE) {
+    fprintf(stderr, "ERROR: libelf initialization failed\n");
+    return -1;
+  }
+
+  if (fd == -1) {
+    // Open the ELF file
+    sfd = open(path, O_RDONLY);
+    if (sfd < 0) {
+      fprintf(stderr, "ERROR: Cannot open ELF file '%s': %s\n", 
+	      path, strerror(errno));
+      return -1;
+    }
+  }
+
+    // Begin ELF reading
+    elf = elf_begin(sfd, ELF_C_READ, NULL);
+    if (elf == NULL) {
+      fprintf(stderr, "ERROR: elf_begin failed for '%s': %s\n",
+	      path, elf_errmsg(-1));
+      if (fd==-1) close(sfd);
+      return -1;
+    }
+
+    // Get the index of the section name string table (.shstrtab)
+    if (elf_getshdrstrndx(elf, &shstrndx) != 0) {
+      fprintf(stderr, "elf_getshdrstrndx() failed: %s", elf_errmsg(-1));
+      rc = -3;
+      goto cleanup;
+    }
+    
+    // Find the section
+    scn = NULL;
+    while ((scn = elf_nextscn(elf, scn)) != NULL) {
+      if (gelf_getshdr(scn, &shdr) == NULL) {
+	fprintf(stderr, "ERROR: gelf_getshdr failed: %s\n", elf_errmsg(-1));
+	rc = -3;
+	goto cleanup;
+      }
+      // Get section name
+      const char *sec_name = elf_strptr(elf, shstrndx, shdr.sh_name);
+      if (sec_name && strcmp(sec_name, scnm) == 0) {
+	// Found the section
+	data = elf_getdata(scn, NULL);
+	if (data == NULL) {
+	  fprintf(stderr, "ERROR: elf_getdata failed: %s\n", elf_errmsg(-1));
+	  rc = -3;
+	  goto cleanup;
+	}
+	sd->data = (const uint8_t *)data->d_buf;
+	sd->size = data->d_size;
+	sd->elf  = elf;
+	sd->fd   = sfd;
+	return 0;
+      }
+    }
+    //  section not found
+    fprintf(stderr, "ERROR:  %s section not found in '%s'\n", scnm, path);
+    rc = -2;
+    
+cleanup:
+    if (elf) {
+        elf_end(elf);
+    }
+    if (fd < 0 && sfd >=0 ) {
+      close(sfd);
+    }
+    return rc;
+}
+
+extern void
+elf_close_secdata(SectionData *sd)
+{
+  if (!sd) return;
+  if (sd->elf) {
+    elf_end((Elf *)sd->elf);
+    sd->elf = NULL;
+  }
+  if (sd->fd >= 0) {
+    close(sd->fd);
+    sd->fd = -1;
+  }
+  sd->data = NULL;
+  sd->size = 0;
 }
 
 #ifdef MAIN

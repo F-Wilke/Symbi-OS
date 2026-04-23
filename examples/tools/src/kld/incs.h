@@ -16,11 +16,11 @@
 #include <unistd.h>
 #include <signal.h>
 #include <sys/signalfd.h>
-#include <sys/mman.h>
 #include <err.h>
 #include <stdbool.h>
 #include <assert.h>
 #include <libgen.h>
+#include <sys/mman.h>
 
 #include "event.h"
 #include "uthash.h"

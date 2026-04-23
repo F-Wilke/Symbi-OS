@@ -1,6 +1,7 @@
 #ifndef __GLOBALS_H__
 #define __GLOBALS_H__
 
+#define KOTBL_SEC       ".kotbl"
 #define KOTBL_DFLT      "kotbl.bin"
 #define FSNAME_DFLT     "libk"
 #define PATHPREFIX_DFLT "libk"
@@ -28,7 +29,7 @@ typedef struct {
   sigproc_t sigproc;        // signal procesing object
   bo_t *    bos;            // hash table of binary objects
   char *    executable;     // path of executable if one was specified
-  char *    botblfile;      // path of binay object table file to create
+  char *    kotblfile;      // path of kernel object table file to create
   char **   dirs;           // directory search array 
   char *    fsname;         // default name for file system mount point dirname
   char *    pathprefix;     // path prefix for default outputs eg. libkern.so
