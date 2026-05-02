@@ -97,7 +97,7 @@ ssize_t kcut_tcp_write(int fd, void *buf, size_t count)
 #ifndef BRACKET_PRIV
     kcut_cnt--;
   } else {
-    ret = read(fd, buf, count);
+    ret = write(fd, buf, count);
     kcut_cnt = KCUT_THRESHOLD;
   }
 #endif
