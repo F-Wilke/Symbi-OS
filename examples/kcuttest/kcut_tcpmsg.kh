@@ -1,4 +1,5 @@
 #ifndef __KCUT_TCPMSG_KH__
+#define __KCUT_TCPMSG_KH__
 
 struct iovec;
 

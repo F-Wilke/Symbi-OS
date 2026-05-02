@@ -52,7 +52,7 @@ master_clean:
 # Not yet implemented in the kernel
 6.16.0-kElevate: FEDORA_RELEASE=43
 6.16.0-kElevate: KERN_REL=6.16.0
-6.16.0-kElevate: KERN_EXTRAVERSION=-kElevate+
+6.16.0-kElevate: KERN_EXTRAVERSION=-kElevate
 6.16.0-kElevate: LINUX_BUILD=--branch dynam_priv-6.16 --single-branch --depth 1
 6.16.0-kElevate: KERN_VER=$(KERN_REL)$(KERN_EXTRAVERSION)
 6.16.0-kElevate: CONFIG=./linuxConfigs/6.16/config-6.16.8-200.fc42.x86_64_Elevate_pnone
