@@ -1,0 +1,1 @@
+savedcmd_Module.symvers :=  /home/user/Symbi-OS/linux-nodbg/scripts/mod/modpost -M          -o Module.symvers -n -T modules.order -i /home/user/Symbi-OS/linux-nodbg/Module.symvers -e -i /home/user/Symbi-OS/examples/kcutpf/.ext/../../kcutidt/Module.symvers

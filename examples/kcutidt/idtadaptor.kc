@@ -31,6 +31,7 @@ gate_desc * idt_adaptor_clone(void) {
   memcpy(new_idt, src_idt, IDT_ENTRIES * sizeof(gate_desc));
   return new_idt;
 }
+EXPORT_SYMBOL(idt_adaptor_clone);
 
 //on_each_cpu callback to load idt on each cpu. 
 //load_idt is a macro that cannot be passed to on_each_cpu
@@ -57,7 +58,9 @@ void idt_adaptor_activate(const gate_desc *idt) {
   // cache pointer as current
   current_idt = (gate_desc *)idt;
 }
+EXPORT_SYMBOL(idt_adaptor_activate);
 
 void idt_adaptor_release(const gate_desc *idt) {
   free_pages((unsigned long)idt, 0);
 }
+EXPORT_SYMBOL(idt_adaptor_release);
