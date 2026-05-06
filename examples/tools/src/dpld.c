@@ -23,6 +23,8 @@ extern unsigned long kallsyms_lookup_name(const char *name);
 extern void* vmalloc_noprof(unsigned long size);
 extern int _printk(const char *fmt, ...);
 
+int KCUT_THRESHOLD;
+
 void *kallsyms_lookup_name_thunk(void *str) {
   return (void *)kallsyms_lookup_name((const char *)str);
 }

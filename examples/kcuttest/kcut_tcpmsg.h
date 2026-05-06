@@ -5,6 +5,9 @@
 #include <sys/uio.h>
 #include "kcut_tcpmsg.kh"
 
+extern int KCUT_THRESHOLD;
+
+
 // ukl inspired shortcut interfaces
 struct kcut_tcpmsg_thunk_args {
   struct iovec *iov;
@@ -38,7 +41,6 @@ ssize_t kcut_tcp_read(int fd, void *buf, size_t count)
   int ret;
   
 #ifndef BRACKET_PRIV
-  const int KCUT_THRESHOLD = 20;
   static int kcut_cnt = 0;
   if (kcut_cnt) {
 #endif
@@ -76,7 +78,6 @@ ssize_t kcut_tcp_write(int fd, void *buf, size_t count)
   int ret;
   
 #ifndef BRACKET_PRIV
-  const int KCUT_THRESHOLD = 20;
   static int kcut_cnt = 0;
   if (kcut_cnt) {
 #endif

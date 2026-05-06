@@ -10,9 +10,11 @@ int  kcut_tcp_recvmsg(int fd, struct iovec *iov)
 {
   struct file *file;
   struct socket *sock;
+  struct sock *sk;
   struct kiocb kiocb;
   struct msghdr msg;
   int ret = 0;
+  int addr_len;       // from ukl shortcut_tcp_recvmsg
 
   // int nonblock = 64;         // from ukl shortcut_tcp_recvmsg ???
   // FIXME: nonblock argument not used anymore now is a setting in flags
@@ -31,6 +33,7 @@ int  kcut_tcp_recvmsg(int fd, struct iovec *iov)
  
   //   3. file -> struct sock * : without reference counting since we have reference count on fd 
   sock = file->private_data;
+  sk = sock->sk;
 
   // from ukl shortcut_tcp_recvmsg
   init_sync_kiocb(&kiocb, file);
@@ -42,7 +45,8 @@ int  kcut_tcp_recvmsg(int fd, struct iovec *iov)
   // FIXME: tcp_recvmsg is not public using sock->ops->recvmsg reaccess cost
   // JA: FIXME: examine nonblock behaviour might need to update
   // flags value as this is now set in flags
-  ret = sock->ops->recvmsg(sock, &msg, iov->iov_len, flags);
+  // ret = sock->ops->recvmsg(sock, &msg, iov->iov_len, flags);
+  ret = tcp_recvmsg(sk, &msg, iov->iov_len, flags, &addr_len);
   return ret;
 }
 

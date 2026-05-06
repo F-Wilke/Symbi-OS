@@ -1,6 +1,7 @@
 #ifndef __KCUT_H__
 #define __KCUT_H__
 
+#include <stdlib.h>
 #include <L0/sym_lib.h>
 #include <L1/stack_switch.h>
 
@@ -23,11 +24,21 @@
 #define LOWER_ME() 
 #endif
 
+extern int KCUT_THRESHOLD;
+
 static inline void kcut_init(void)
 {
 #ifdef EVACUATE
   kcut_evacuate(1);
 #endif
+  //get threshold from env variable
+  char *env = getenv("KCUT_THRESHOLD");
+  if (env) {
+    KCUT_THRESHOLD = atoi(env);
+  } else {
+    KCUT_THRESHOLD = 20; // default value
+  }
+
 #ifndef BRACKET_PRIV
   sym_elevate();
 #endif
