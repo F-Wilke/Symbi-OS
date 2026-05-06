@@ -11,11 +11,13 @@
 #include <libelf.h>
 #include <gelf.h>
 
-#include "elf.h"
+#include "kldelf.h"
 
 typedef struct { char *buf; size_t top; } StrTab;
 
-size_t add_str(StrTab *st, const char *s) {
+static size_t
+add_str(StrTab *st, const char *s)
+{
     size_t off = st->top;
     strcpy(st->buf + off, s);
     st->top += strlen(s) + 1;
@@ -23,9 +25,10 @@ size_t add_str(StrTab *st, const char *s) {
 }
 
 // Returns a memory-mapped pointer to the ELF data
-extern void* elf_generate_elf_mmap(const SymbolEntry *entries, int count,
-				   size_t nmstrlen,   
-				   size_t *out_size, int *out_fd)
+extern void*
+kld_generate_elf_mmap(const kld_sym *entries, int count,
+		      size_t nmstrlen,   
+		      size_t *out_size, int *out_fd)
 {
   void *map = NULL; 
   int mfd = memfd_create("elf_mmap", MFD_CLOEXEC);
@@ -91,13 +94,8 @@ extern void* elf_generate_elf_mmap(const SymbolEntry *entries, int count,
 
     GElf_Sym *sym_table = calloc(count + 1, sizeof(GElf_Sym));
     for(int i=0; i<count; i++) {
-        sym_table[i+1].st_name = sym_offsets[i];
-        sym_table[i+1].st_value = entries[i].addr;
-        sym_table[i+1].st_size = entries[i].size;
-        sym_table[i+1].st_shndx = SHN_ABS;
-        int b = (entries[i].bind == BIND_WEAK) ? STB_WEAK : STB_GLOBAL;
-        int t = (entries[i].type == TYPE_FUNC) ? STT_FUNC : STT_OBJECT;
-        sym_table[i+1].st_info = GELF_ST_INFO(b, t);
+      sym_table[i+1]         = entries[i].sym;
+      sym_table[i+1].st_name = sym_offsets[i];
     }
 
     Elf_Scn *s_symtab = elf_newscn(elf);
@@ -192,29 +190,15 @@ extern void* elf_generate_elf_mmap(const SymbolEntry *entries, int count,
     return map;
 }
 
-
-static void seInit(SymbolEntry *e, Elf *elf, size_t *nmstrlen,
-		   const GElf_Shdr *shdr,
-		   const GElf_Sym *sym)
-{
-  char *name = elf_strptr(elf, shdr->sh_link, sym->st_name);
-  e->name    = strdup(name);
-  *nmstrlen += strlen(e->name)+1; // +1 for null
-  e->addr    = (sym->st_shndx == SHN_UNDEF) ? 0 : sym->st_value;
-  e->size    = 0;   // default 0
-  e->bind = BIND_GLOBAL;
-  e->type = TYPE_ABS;
-}
-
 extern int
-elf_read_syms(const char *path, int fd, SymbolEntry **entries, size_t *n,
+kld_read_elf_syms(const char *path, int fd, kld_sym **entries, size_t *n,
 	      size_t *nmstrlen)
 {
   Elf         *elf  = NULL;
   Elf_Scn     *scn  = NULL;
   GElf_Shdr   shdr;
   Elf_Data    *data;
-  SymbolEntry *ents = NULL;
+  kld_sym     *ents = NULL;
   int          rc   = 0;
   int          emax = 0;
   int          ei   = 0;
@@ -249,11 +233,13 @@ elf_read_syms(const char *path, int fd, SymbolEntry **entries, size_t *n,
 
 	if (ei == emax) {
 	  emax = (emax > 0) ? emax << 1 : 1024;
-	  ents = realloc(ents, emax * sizeof(SymbolEntry));
+	  ents = realloc(ents, emax * sizeof(kld_sym));
 	}
-	SymbolEntry *e = &ents[ei];
-	seInit(e, elf, nmstrlen, &shdr, &sym); 
-	ei++;
+	
+	kld_sym *e = &ents[ei];
+	if (kld_sym_init_from_sym(e, &sym, elf, nmstrlen, &shdr)>=0) {
+	    ei++;
+	}
       }
     }
   }
@@ -265,7 +251,7 @@ elf_read_syms(const char *path, int fd, SymbolEntry **entries, size_t *n,
 }
 
 extern int
-elf_open_secdata(SectionData *sd, const char *path, int fd, const char *scnm)
+kld_open_elf_secdata(kld_secdata *sd, const char *path, int fd, const char *scnm)
 {
   GElf_Shdr shdr;
   size_t shstrndx;
@@ -358,7 +344,7 @@ cleanup:
 }
 
 extern void
-elf_close_secdata(SectionData *sd)
+kld_close_elf_secdata(kld_secdata *sd)
 {
   if (!sd) return;
   if (sd->elf) {
@@ -376,55 +362,65 @@ elf_close_secdata(SectionData *sd)
 #ifdef MAIN
 
 int main() {
-        SymbolEntry entries[] = {
-        // 1. Global Function (Standard 'T' type, but 'A' because it's Absolute)
-        {"global_func",   0x7FFF00001000, 0,  BIND_GLOBAL, TYPE_FUNC},
+  kld_sym entries[7];
+  kld_sym *e;
+  int i=0;
+  // 1. Global Function (Standard 'T' type, but 'A' because it's Absolute)
+  e = &entries[i]; i++;
+  assert(kld_sym_init_from_kallsyms(e, 0x7FFF00001000, "global_func", 'T')>=0);
+  
+  // 2. Weak Function (Appears as 'W' in nm)
+  // If the app defines its own 'weak_func', the app's version wins.
+  e = &entries[i]; i++;
+  assert(kld_sym_init_from_kallsyms(e, 0x7FFF00002000, "weak_func", 'W')>=0); 
+  
+  // 3. Global Initialized Data (Standard 'D' type, but 'A' because it's Absolute)
+  e = &entries[i]; i++;
+  assert(kld_sym_init_from_kallsyms(e, 0x7FFF00003000, "global_data", 'D')>=0); 
+  
+  // 4. Global Read-Only Data (Standard 'R' type)
+  // Note: For Absolute symbols, the 'RO' is enforced by your external memory protection
+  e = &entries[i]; i++;
+  assert(kld_sym_init_from_kallsyms(e, 0x7FFF00004000, "global_rodata", 'R')>=0); 
+  
+  // 5. Global BSS / Uninitialized Data (Standard 'B' type)
+  e = &entries[i]; i++;
+  assert(kld_sym_init_from_kallsyms(e, 0x7FFF00005000, "global_bss", 'B')>=0); 
+  
+  // 6. Weak Data Symbol (Appears as 'V' or 'W' in nm)
+  e = &entries[i]; i++;
+  assert(kld_sym_init_from_kallsyms(e, 0x7FFF00006000, "weak_data", 'W')>=0); 
+    
+  // 7. A Pure Absolute Constant (No type, just a value)
+  e = &entries[i]; i++;
+  assert(kld_sym_init_from_kallsyms(e, 0xDEADBEEF, "absolute_val", 'A')>=0); 
 
-        // 2. Weak Function (Appears as 'W' in nm)
-        // If the app defines its own 'weak_func', the app's version wins.
-        {"weak_func",     0x7FFF00002000, 0,  BIND_WEAK,   TYPE_FUNC},
-
-        // 3. Global Initialized Data (Standard 'D' type, but 'A' because it's Absolute)
-        {"global_data",   0x7FFF00003000, 8,  BIND_GLOBAL, TYPE_DATA},
-
-        // 4. Global Read-Only Data (Standard 'R' type)
-        // Note: For Absolute symbols, the 'RO' is enforced by your external memory protection
-        {"global_rodata", 0x7FFF00004000, 4,  BIND_GLOBAL, TYPE_RODATA},
-
-        // 5. Global BSS / Uninitialized Data (Standard 'B' type)
-        {"global_bss",    0x7FFF00005000, 256, BIND_GLOBAL, TYPE_BSS},
-
-        // 6. Weak Data Symbol (Appears as 'V' or 'W' in nm)
-        {"weak_data",     0x7FFF00006000, 4,  BIND_WEAK,   TYPE_DATA},
-
-        // 7. A Pure Absolute Constant (No type, just a value)
-        {"absolute_val",  0xDEADBEEF,     0,  BIND_GLOBAL, TYPE_ABS}
-    };
-
-    size_t elf_size;
-    int mfd;
-    size_t nmstrlen = 0;
-    void *elf_ptr;
-    int n = sizeof(entries)/sizeof(entries[0]);
-    for (int i = 0; i<n; i++) {
-      nmstrlen += strlen(entries[i].name) + 1; // +1 for null byte
-    }
-    elf_ptr = elf_generate_elf_mmap(entries, n, nmstrlen, &elf_size, &mfd);
-
-    if (elf_ptr != MAP_FAILED) {
-        printf("ELF mapped at %p (Size: %zu)\n", elf_ptr, elf_size);
-
-        // Example: Write the mapped buffer to a file
-        int dfd = open("libstubs.so", O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        write(dfd, elf_ptr, elf_size);
-        close(dfd);
-
-        // Cleanup mapping
-        munmap(elf_ptr, elf_size);
-        close(mfd);
-    }
-
-    return 0;
+  assert(i==(sizeof(entries)/sizeof(entries[0])));
+  
+  size_t elf_size;
+  int mfd;
+  size_t nmstrlen = 0;
+  void *elf_ptr;
+  int n = sizeof(entries)/sizeof(entries[0]);
+  for (int i = 0; i<n; i++) {
+    nmstrlen += strlen(entries[i].name) + 1; // +1 for null byte
+  }
+  elf_ptr = kld_generate_elf_mmap(entries, n, nmstrlen, &elf_size, &mfd);
+  
+  if (elf_ptr != MAP_FAILED) {
+    printf("ELF mapped at %p (Size: %zu)\n", elf_ptr, elf_size);
+    
+    // Example: Write the mapped buffer to a file
+    int dfd = open("libstubs.so", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    write(dfd, elf_ptr, elf_size);
+    close(dfd);
+    
+    // Cleanup mapping
+    munmap(elf_ptr, elf_size);
+    close(mfd);
+  }
+  
+  return 0;
 }
 
 #endif

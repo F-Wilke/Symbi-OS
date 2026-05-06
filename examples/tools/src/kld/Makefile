@@ -1,7 +1,7 @@
-SRCS       := main.c kldfs.c fs.c sigproc.c elf.c
+SRCS       := main.c kldfs.c fs.c sigproc.c kldelf.c
 OBJS       := $(SRCS:%.c=%.o)
 O          := 0
-CFLAGS     += -g -O${O} -std=gnu99 -MD -MP -Wall -Werror $(shell pkg-config fuse3 --cflags)
+CFLAGS     += -g -O${O} -std=gnu99 -MD -MP -Wall -Werror $(shell pkg-config fuse3 --cflags) 
 TARGETS    := kld readsymtbl listlibs stubstest
 UTHASHREPO := git@github.com:troydhanson/uthash.git
 UTHASHDIR  := ext/uthash
@@ -25,9 +25,9 @@ ${UTHASHINCS}/uthash.h:
 stubstest: stubtest.c mklibstubs
 	./mklibstubs
 	${CC} -fPIC $< -o $@ -L. -lstubs
-	@echo -e "****** To test our approach to symbols run *******\nLD_LIBRARY_PATH=. ./stubtest"
+	@echo -e "****** To test our approach to symbols run *******\nLD_LIBRARY_PATH=. ./stubstest"
 
-mklibstubs: elf.c
+mklibstubs: kldelf.c
 	${CC} -DMAIN $< -o $@ -lelf
 
 listlibs: listlibs.c
@@ -38,7 +38,7 @@ readsymtbl: readsymtbl.c
 
 ##
 clean:
-	-${RM} -rf $(wildcard *.o *.d ${TARGETS} mklibstubs *.so libk)
+	-${RM} -rf $(wildcard *.o *.d *.bin ${TARGETS} mklibstubs *.so libk)
 
 distclean: clean
 	-${RM} rf -rf $(wildcard ext)

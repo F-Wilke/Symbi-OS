@@ -1,38 +1,30 @@
-CC = gcc
+CC := gcc
+O  := 2
+CFLAGS = -O${O} -ggdb -MD -MP -Wall -Wextra  -Wfatal-errors -fPIC
+CFLAGS += -I ../kcutpf -I ../kcutevac -I ../../Symlib/include -DDYNLINK
+KFLAGS = -I ../kcutidt -K ../kcutidt -k kcutidt.ko 
+TARGET  := kcuttest
+KTARGET := kcuttest.ko 
+LIBS := -lc  ../../Symlib/build/L1/L1.a
+LDFLAGS := ${LIBS}
 
-CFLAGS = -O2 -ggdb -Wall -Wextra  -Wfatal-errors -fPIC
-CFLAGS += -I ../../Symlib/include -DDYNLINK
+.PHONY: all clean
 
-TARGETS :=  main main_static
-MODNAME := kcuttest.kbin
-.PHONY: all clean libkallsyms.so libkallsyms.a
-
-all: $(TARGETS)
-
-# extension boiler plate
-libextension.a $(MODNAME): $(wildcard *.kc *.kh)
-	target=$(MODNAME) ../tools/kcc
-
-libkallsyms.so:
-	cp /proc/$@ $@
-
-libkallsyms.a:
-	cp /proc/$@ $@
+all: ${KTARGET} $(TARGET) 
 
 # main program
 %.o: %.c 
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+${KTARGET}: $(wildcard *.kc *.kh *.kS)
+	 ../tools/kcc -o $@  ${KFLAGS} 
 
-main:  main.o mmap_stack_test.o libextension.a libkallsyms.so
-#main:  main.o libkallsyms.so
-#	$(CC) $(CFLAGS) -o $@ $< mmap_stack_test.o -lc -L../../Symlib/dynam_build -lSym -L. -lkallsyms  -L. -lkallsyms -lextension 
-	$(CC) $(CFLAGS) -o $@ $< mmap_stack_test.o -lc  -L. -lkallsyms -lextension ../../Symlib/build/L1/L1.a
+${TARGET}:  main.o mmap_stack_test.o 
+	$(CC) $(CFLAGS) -o $@ $^ ${LDFLAGS}
 
-main_static: main.o mmap_stack_test.o libkallsyms.a libextension.a
-	$(CC) $(CFLAGS) -o $@ $^  libkallsyms.a libextension.a -lc ../../Symlib/build/L1/L1.a
+-include *.d
 
 clean:
-	rm -rf $(wildcard $(TARGETS) *.o *.so *.a ext.kbin .ext)
+	rm -rf $(wildcard $(TARGET) *.o *.so *.d .ext)
 
 

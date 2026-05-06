@@ -21,6 +21,8 @@
 #include <assert.h>
 #include <libgen.h>
 #include <sys/mman.h>
+#include <elf.h>
+#include <gelf.h>
 
 #include "event.h"
 #include "uthash.h"
@@ -28,7 +30,7 @@
 #include "sigproc.h"
 #include "globals.h"
 #include "misc.h"
-#include "elf.h"
+#include "kldelf.h"
 #include "kldfs.h"
 
 

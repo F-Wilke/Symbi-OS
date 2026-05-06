@@ -1,0 +1,3 @@
+0x00000000	idt_adaptor_clone	kcutidt	EXPORT_SYMBOL	
+0x00000000	idt_adaptor_activate	kcutidt	EXPORT_SYMBOL	
+0x00000000	idt_adaptor_release	kcutidt	EXPORT_SYMBOL	

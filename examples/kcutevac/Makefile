@@ -1,6 +1,6 @@
 CC = gcc
 KFLAGS = 
-TARGET := kcuttcp.ko
+TARGET := kcutevac.ko
 .PHONY: clean 
 
 # extension boiler plate

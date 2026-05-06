@@ -1,6 +1,6 @@
 CC = gcc
-KFLAGS = 
-TARGET := kcuttcp.ko
+KFLAGS = -I ../kcutidt -K ../kcutidt -k kcutidt.ko 
+TARGET := kcutpf.ko
 .PHONY: clean 
 
 # extension boiler plate

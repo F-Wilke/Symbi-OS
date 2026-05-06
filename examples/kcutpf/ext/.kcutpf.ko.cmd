@@ -1,0 +1,1 @@
+savedcmd_kcutpf.ko := ld -r -m elf_x86_64 -z noexecstack --no-warn-rwx-segments --build-id=sha1  -T /home/user/Symbi-OS/linux-nodbg/scripts/module.lds -o kcutpf.ko kcutpf.o kcutpf.mod.o .module-common.o

@@ -357,20 +357,20 @@ done:
 }
 
 static void
-cleanupEntries(SymbolEntry *entries, ssize_t n)
+cleanupEntries(kld_sym *entries, ssize_t n)
 {
   for (int i=0; i<n; i++) free(entries[i].name);
   free(entries);
 }
 
 static void
-writeso(const char *path, int fd, const SymbolEntry *entries, ssize_t n,
+writeso(const char *path, int fd, const kld_sym *entries, ssize_t n,
 	 size_t nmstrlen)
 {
   int mfd;
   int dfd=fd;
   size_t elf_size;
-  void *elf_ptr = elf_generate_elf_mmap(entries, n, nmstrlen, &elf_size, &mfd);
+  void *elf_ptr = kld_generate_elf_mmap(entries, n, nmstrlen, &elf_size, &mfd);
   
   if (elf_ptr != MAP_FAILED) {
     VPRINT("%s: ELF mapped at %p (Size: %zu)\n", path, elf_ptr, elf_size);
@@ -386,60 +386,6 @@ writeso(const char *path, int fd, const SymbolEntry *entries, ssize_t n,
     munmap(elf_ptr, elf_size);
     close(mfd);
   }
-}
-
-static int
-initSE(SymbolEntry *this, uintptr_t addr, char *name, char type)
-{
-  int rc = 0;
-  switch (type) {
-  case 'A':
-  case 'a':
-    this->bind = BIND_GLOBAL;
-    this->type = TYPE_ABS;
-    break;
-  case 'B':
-  case 'b':
-    this->bind = BIND_GLOBAL;
-    this->type = TYPE_BSS;
-    break;
-  case 'D':
-  case 'd':
-    this->bind = BIND_GLOBAL;
-    this->type = TYPE_DATA;
-    break;
-  case 'R':
-  case 'r':
-    this->bind = BIND_GLOBAL;
-    this->type = TYPE_RODATA;
-    break;
-  case 'T':
-  case 't':
-    this->bind = BIND_GLOBAL;
-    this->type = TYPE_FUNC;
-    break;
-  case 'V':
-  case 'W':
-  case 'v':
-  case 'w':
-    this->bind = BIND_WEAK;
-    this->type = TYPE_FUNC;
-    break;
-  default:
-    fprintf(stderr, "Unsupported type: %c\n", type);
-    assert(0);
-    rc = -1;
-  }
-  
-  if (rc>=0) {
-    this->name = strdup(name);
-    this->addr = addr;
-  } else {
-    this->name = NULL;
-    this->addr = 0;
-  }
-  this->size   = 0; 
-  return rc;
 }
 
 /** FROM: Gemini
@@ -500,11 +446,11 @@ prcKallsyms(const char *pathprefix, FILE *fp)
   char *       module   = NULL;
   size_t       ksyms_n  = 0;
   size_t       ksyms_i  = 0;
-  SymbolEntry *kentries = NULL;;
+  kld_sym     *kentries = NULL;;
   
   struct Module {
     UT_hash_handle hh;
-    SymbolEntry   *entries;
+    kld_sym       *entries;
     char          *name;
     size_t         syms_n;
     size_t         syms_i;
@@ -549,12 +495,13 @@ prcKallsyms(const char *pathprefix, FILE *fp)
 	if (mod->syms_i == mod->syms_n) {
 	  mod->syms_n = (mod->syms_n) ? mod->syms_n << 1 : 1024;
 	  mod->entries = realloc((void *)mod->entries,
-				 mod->syms_n*sizeof(SymbolEntry));
+				 mod->syms_n*sizeof(kld_sym));
 	  // for good measure zero out new memory
 	  memset(&(mod->entries[mod->syms_i]), 0,
-		 (mod->syms_n - mod->syms_i) * sizeof(SymbolEntry));
+		 (mod->syms_n - mod->syms_i) * sizeof(kld_sym));
 	}
-	if (initSE(&(mod->entries[mod->syms_i]),addr, name, type)>=0) {
+	if (kld_sym_init_from_kallsyms(&(mod->entries[mod->syms_i]),
+				       addr, name, type)>=0) {
 	  mod->nmstrlen += nmlen;
 	  mod->syms_i++;
 	}
@@ -564,12 +511,12 @@ prcKallsyms(const char *pathprefix, FILE *fp)
 	// type, name);
 	if (ksyms_i == ksyms_n) {
 	  ksyms_n = (ksyms_n) ? ksyms_n << 1 : 1024;
-	  kentries = realloc((void *)kentries, ksyms_n*sizeof(SymbolEntry));
+	  kentries = realloc((void *)kentries, ksyms_n*sizeof(kld_sym));
 	  // for good measure zero out new memory
 	  memset(&(kentries[ksyms_i]), 0,
-		 (ksyms_n - ksyms_i) * sizeof(SymbolEntry));
+		 (ksyms_n - ksyms_i) * sizeof(kld_sym));
 	}
-	if (initSE(&kentries[ksyms_i],addr, name, type)>=0) {
+	if (kld_sym_init_from_kallsyms(&kentries[ksyms_i],addr, name, type)>=0) {
 	  knmstrlen += nmlen;
 	  ksyms_i++;
 	}
@@ -656,16 +603,16 @@ cleanup(void)
 static int
 prcBO(bo_t *bo)
 {
-  int i=0, rc=0;
-  SymbolEntry *entries = NULL;
-  size_t       n, nmstrlen;
+  int i=0, rc      = 0;
+  kld_sym *entries = NULL;
+  size_t   n, nmstrlen;
   
   if (GBLS.verbose) {
     VPRINT("Processing ko (%d):\n",i);
     dumpbo(bo);
     i++;
   }
-  if (elf_read_syms(bo->kofnm, bo->kofd, &entries, &n, &nmstrlen)<0) {
+  if (kld_read_elf_syms(bo->kofnm, bo->kofd, &entries, &n, &nmstrlen)<0) {
     rc = -1;
     goto done;
   }
@@ -677,16 +624,70 @@ prcBO(bo_t *bo)
   return rc;
 }
 
+static size_t
+parsekotbl(char *kotblnxt,  char **kofnm, char **modnm, char **koopts)
+{
+  assert(kotblnxt != NULL);
+  assert(*kofnm   == NULL);
+  assert(*koopts  == NULL);
+  assert(*modnm   == NULL);
+  size_t n,nn;
+  char *ptr = kotblnxt;
+
+ 
+  // Loop until -1 is returned (EOF or error)
+  n = strlen(ptr);
+  if (n==0) { nn=0; goto done; }
+  *kofnm = strdup(ptr);
+  ptr += (n+1); // +1 to skip null
+  nn   = (n+1);
+  
+  n = strlen(ptr);
+  if (n>0) { 
+    *modnm = strdup(ptr);
+  }
+  ptr += (n+1); // +1 to skip null
+  nn  += (n+1);
+  
+  n = strlen(ptr);
+  if (n>0) {
+    *koopts = strdup(ptr);
+  }
+  ptr += (n+1); // +1 to skip null
+  nn  += (n+1);
+ done:
+  if (nn==0) {
+    if (*kofnm)  free(*kofnm);
+    if (*modnm)  free(*modnm);
+    if (*koopts) free(*koopts);
+  }
+  return nn;
+}
+
 static int
 prcExec(const char *exec)
 {
-  SectionData sd;
+  kld_secdata sd;
   int rc = 0;
   
-  rc = elf_open_secdata(&sd, exec, -1, KOTBL_SEC);
+  rc = kld_open_elf_secdata(&sd, exec, -1, KOTBL_SEC);
   if (rc>=0) {
     VLPRINT(2, "%s:%s mapped\n", exec, KOTBL_SEC);
-    elf_close_secdata(&sd);
+    char *kotbl = (char *)sd.data;
+    size_t size = sd.size, n, nn=0;
+    char *fnm, *modnm, *opts;
+    int i=0;
+    while (nn<size) {
+      fnm = modnm = opts = NULL;
+      n = parsekotbl(&(kotbl[nn]), &fnm, &modnm, &opts);
+      if (n == 0) break;
+      nn+=n;
+      VLPRINT(2, "kotbl[%d]: fnm:%s modnm:%s opts:%s\n", i, fnm, modnm, opts);
+      if (fnm) free(fnm);
+      if (modnm) free(modnm);
+      if (opts) free(opts);
+    }
+    kld_close_elf_secdata(&sd);
   }
   
   return rc;
@@ -717,8 +718,18 @@ main(int argc, char **argv)
     }
     bo_t *bo, *tmp;
     HASH_ITER(hh, GBLS.bos, bo, tmp) {
+      // use null as seperators to allow paths to contain all valid ascii chars
+      // including whitespaces chars and newlines 
       prcBO(bo);
-      fprintf(kotblf, "%s,%s\n", bo->kofnm, bo->kldopts);
+      size_t n = strlen(bo->kofnm);
+      assert(1==fwrite(bo->kofnm,n,1,kotblf));
+      assert(1==fwrite("\0",1,1,kotblf));
+      n = strlen(bo->modnm);
+      assert(1==fwrite(bo->modnm,n,1,kotblf));
+      assert(1==fwrite("\0",1,1,kotblf));
+      n = strlen(bo->kldopts);
+      assert(1==fwrite(bo->kldopts,n,1,kotblf));
+      assert(1==fwrite("\0",1,1,kotblf));
     }
     fclose(kotblf);
   }

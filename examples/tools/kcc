@@ -3,6 +3,7 @@
 scriptdir=$(dirname $(realpath $0))
 configdir=$scriptdir/config
 srcdir=$scriptdir/src
+kld=${srcdir}/kld/kld
 
 findSymlib()
 {
@@ -26,6 +27,11 @@ findlinuxdir()
 	cd ..
 	findlinuxdir
     fi
+}
+
+usage()
+{
+    echo "USAGE: kcc [-o out] [-n name] [-I include_dir] [-K module_search_dir] [-k module.ko] [source]" > /dev/stderr
 }
 
 [[ -z $LINUX_BUILD_PATH ]] && [[ -a $configdir/LINUX_BUILD_PATH ]] \
@@ -56,12 +62,47 @@ tmpdir=$curdir/.ext
 
 [[ ! -d $tmpdir ]] && mkdir $tmpdir
 
-target=${target:-ext.kbin}
-name=${target%.kbin}
+target=ext.ko
+name=${target%.ko}
+typeset -i topt=0
+typeset -i nopt=0
+declare -a include_dirs
+declare -a module_search_dirs
+declare -a dep_modules
 
-[[ -z $target ]] && {
-    echo "USAGE: kcc [source]"
-    exit -1
+while getopts ":n:o:I:K:k:h" o; do
+    case "${o}" in
+	h)
+	    usage
+	    exit 1
+	    ;;
+	n)
+	    name=${OPTARG}
+	    nopt=1
+	    ;;
+	o)
+	    target=${OPTARG}
+	    topt=1
+	    ;;
+	I)
+	    include_dirs+=("${OPTARG}")
+	    ;;
+	K)
+	    module_search_dirs+=("${OPTARG}")
+	    ;;
+	k)
+	    dep_modules+=("${OPTARG}")
+	    ;;
+	*)
+	    usage
+	    exit 1
+	    ;;
+    esac
+done
+shift $((OPTIND-1))
+
+(( topt && !nopt )) && {
+    name=${target%.ko}
 }
 
 if (( $# > 0 )); then
@@ -72,6 +113,7 @@ fi
 
 (( ! ${#src[@]} ))  && {
     echo "No .kc, .kh or .kS source files" > /dev/stderr
+    usage
     exit -1
 }
 
@@ -90,11 +132,11 @@ for s in ${src[@]}; do
 	continue
     }
     
-	# app.kh needs special treatment. It needs to be referenced by a symlink "app_orig.h" in the tmpdir.
+    # app.kh needs special treatment. It needs to be referenced by a symlink "app_orig.h" in the tmpdir.
     # a generated app.h then includes app_orig.h and defines the GOT based jumps to application code.
     if [[ $s == *app.kh ]]; then
-    [[ ! -a $tmpdir/app_orig.h ]] && ln -s $s $tmpdir/app_orig.h
-    continue
+	[[ ! -a $tmpdir/app_orig.h ]] && ln -s $s $tmpdir/app_orig.h
+	continue
     fi
 
     if [[ $s =~ \.kc$ ]]; then 
@@ -109,7 +151,6 @@ for s in ${src[@]}; do
     fi
     [[ ! -a $tmpdir/$t ]] && ln -s $s $tmpdir/$t
 done
-
 
 [[ ! -a $tmpdir/init.c ]] && {
     cat > $tmpdir/init.c <<EOF
@@ -161,21 +202,57 @@ module_exit(ext_exit);
 EOF
 }
 
-[[ ! -a $tmpdir/dpld.c ]] && {
-    cp $srcdir/dpld.c $tmpdir
-}
+# Process dependent modules and build KBUILD_EXTRA_SYMBOLS
+declare -a kbuild_symvers
+for dep_mod in "${dep_modules[@]}"; do
+    found=0
+    for search_dir in "${module_search_dirs[@]}"; do
+	if [[ -f "$search_dir/$dep_mod" ]]; then
+	    # Found the module, look for Module.symvers
+	    if [[ -f "$search_dir/Module.symvers" ]]; then
+		symvers_path=$(realpath "$search_dir/Module.symvers")
+		kbuild_symvers+=("$symvers_path")
+		found=1
+		break
+	    else
+		echo "ERROR: Module.symvers not found for $dep_mod in $search_dir" > /dev/stderr
+		exit -1
+	    fi
+	fi
+    done
+    
+    if (( ! found )); then
+	echo "ERROR: Could not find $dep_mod in any of the specified search directories" > /dev/stderr
+	exit -1
+    fi
+done
+
+# Build ccflags-y with base directory and all -I includes
+ccflags_content="-I $curdir"
+for inc_dir in "${include_dirs[@]}"; do
+    ccflags_content="$ccflags_content -I $(realpath $inc_dir)"
+done
+
+# Build KBUILD_EXTRA_SYMBOLS if we have dependencies
+kbuild_extra_symbols=""
+if (( ${#kbuild_symvers[@]} > 0 )); then
+    kbuild_extra_symbols=$(IFS=' '; echo "${kbuild_symvers[*]}")
+fi
+
+[[ -n $kbuild_extra_symbols ]] && kbuild_extra_symbols="KBUILD_EXTRA_SYMBOLS := ${kbuild_extra_symbols}"
 
 cat > $tmpdir/Makefile <<EOF
 obj-m += ${name}.o
 ${name}-y := \$(patsubst %.c,%.o,${cfiles[@]}) \$(patsubst %.S,%.o,${asmfiles[@]}) init.o
-ccflags-y := -I $curdir
+ccflags-y := $ccflags_content
 
-KO_FILES := ${name}.ko \$(wildcard *.ko)
-KBIN_FILES := \$(KO_FILES:.ko=.kbin)
+$kbuild_extra_symbols
+
+KO_FILES := ${name}.ko 
 
 .PHONY: all clean ${name}.ko
 
-all: libextension.a
+all: app.h ${name}.ko
 
 %.kbin: %.ko
 	ld -r -b binary -z noexecstack -o \$@ \$<
@@ -183,27 +260,15 @@ all: libextension.a
 ${name}.ko: ${cfiles[@]}
 	make -C ${LINUX_BUILD_PATH} M=${tmpdir} modules
 
-libextension.a: dpld.o extension.o \$(KBIN_FILES)
-	ar rcs \$@ \$^
-
 app.h: app_orig.h
 	$scriptdir/genappheader app.h app_got.h app_orig.h
 
 modules.h: ${name}.ko
 	$scriptdir/genmodsheader -o modules.h \$(wildcard *.ko)
 
-dpld.o: dpld.c app.h modules.h
-	gcc \${EXT_CFLAGS} -O2 -Wall -Wextra -Wfatal-errors -fPIC -I $symlibdir/include -DDDYNLINK -c -o \$@ \$<
-
-extension.o: extension.c app.h
-	gcc \${EXT_CFLAGS} -O2 -c -o \$@ \$<
-
-extension.c: ${hfiles[@]}
-	$scriptdir/genifunc \$@ \$^
-
 clean:
 	make -C ${LINUX_BUILD_PATH} M=${tmpdir} clean
-	-rm -rf \$(wildcard *.o extension.c libextension.a ${name}.ko *.kbin)
+	-rm -rf \$(wildcard *.o ${name}.ko *.kbin)
 
 EOF
 
@@ -216,10 +281,9 @@ make -C $tmpdir
 
 rtdir=$(realpath --relative-to=$PWD $tmpdir)
 
-# [[ ! -a extension.h ]] && ln -s $rtdir/extension.h .
 [[ ! -a app.h ]] && ln -s $rtdir/app.h .
-[[ ! -a libextension.a ]] && ln -s $rtdir/libextension.a .
-cp /proc/libkallsyms.so /proc/libkallsyms.a $curdir
 
-#[[ ! -a ${name}.kbin ]] && ln -s $rtdir/${name}.kbin .
+[[ -a $rtdir/$target ]] && mv $rtdir/$target $curdir/$target
+[[ -a $rtdir/Module.symvers ]] && mv $rtdir/Module.symvers $curdir/Module.symvers
+
 exit 0
