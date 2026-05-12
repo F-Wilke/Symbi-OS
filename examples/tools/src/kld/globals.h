@@ -1,12 +1,14 @@
 #ifndef __GLOBALS_H__
 #define __GLOBALS_H__
 
-#define KOTBL_SEC       ".kotbl"
-#define KOTBL_DFLT      "kotbl.bin"
-#define FSNAME_DFLT     "libk"
-#define PATHPREFIX_DFLT "libk"
-#define KLDOPTS_DFLT    "EXCLUSIVE"
+#define KOTBL_SEC        ".kotbl"
+#define KOTBL_DFLT       "kotbl.bin"
+#define FSNAME_DFLT      "libk"
+#define PATHPREFIX_DFLT  (NULL)
+#define LIBKERNPATH_DFLT "libkern.so"
+#define KLDOPTS_DFLT     "EXCLUSIVE"
 #define SOPERM_DFLT      (0644)
+#define KALLSYMSPATH     "/proc/kallsyms"
 
 // Binary Object
 //   kld works with binary objects that are both represented by
@@ -14,9 +16,10 @@
 //    1) Constructing both as needed
 //    2) At runtime loading ko's and updating so's to reflect load addresses
 typedef struct {
-  UT_hash_handle hh;
-  char          *kofnm;      // kernel object (ko) full path canonical file name
-  char          *sofnm;      // share object (so) full path cononical file name 
+  UT_hash_handle hhpath;     // hash handle for ko path lookup        
+  UT_hash_handle hhmod;      // hash handle for mod name lookup
+  char          *kofnm;      // kernel object (ko) full canonical path
+  char          *sofnm;      // share object (so) full cononical path
   char          *modnm;      // module name
   char          *kldopts;    // kld options
   int            kofd;       // fd of kofnm once opened 
@@ -27,11 +30,13 @@ typedef struct {
   char      cwd[PATH_MAX];  // pwd 
   fs_t      fs;             // synthetic file system object
   sigproc_t sigproc;        // signal procesing object
-  bo_t *    bos;            // hash table of binary objects
+  bo_t *    bosbypath;      // hash table of binary objects (by path)
+  bo_t *    bosbymod;       // hash table of binary objects (by modnm)
   char *    executable;     // path of executable if one was specified
   char *    kotblfile;      // path of kernel object table file to create
   char **   dirs;           // directory search array 
-  char *    fsname;         // default name for file system mount point dirname
+  char *    fsname;         // default name for file system mount poinxot dirname
+  char *    libkernpath;    // name for lib kernel so
   char *    pathprefix;     // path prefix for default outputs eg. libkern.so
   pid_t     pid;            // pid of this process (useful for fs interface)
   int       dirc;           // count of ko entries in bo directory search array

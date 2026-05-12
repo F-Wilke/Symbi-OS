@@ -2,7 +2,7 @@ CC := gcc
 O  := 2
 CFLAGS = -O${O} -ggdb -MD -MP -Wall -Wextra  -Wfatal-errors -fPIC
 CFLAGS += -I ../kcutpf -I ../kcutevac -I ../../Symlib/include -DDYNLINK
-KFLAGS = -I ../kcutidt -K ../kcutidt -k kcutidt.ko 
+#KFLAGS = -I ../kcutidt -K ../kcutidt -k kcutidt.ko 
 TARGET  := kcuttest
 KTARGET := kcuttest.ko 
 LIBS := -lc  ../../Symlib/build/L1/L1.a
@@ -10,7 +10,8 @@ LDFLAGS := ${LIBS}
 
 .PHONY: all clean
 
-all: ${KTARGET} $(TARGET) 
+all: ${KTARGET}
+#$(TARGET) 
 
 # main program
 %.o: %.c 
@@ -25,6 +26,6 @@ ${TARGET}:  main.o mmap_stack_test.o
 -include *.d
 
 clean:
-	rm -rf $(wildcard $(TARGET) *.o *.so *.d .ext)
+	rm -rf $(wildcard $(TARGET) $(KTARGET) *.o *.so *.d .ext)
 
 

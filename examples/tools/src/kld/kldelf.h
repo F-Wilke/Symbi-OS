@@ -45,6 +45,7 @@ kld_sym_init_from_kallsyms(kld_sym *this, uintptr_t addr, char *name,
   case 'U': assert(0); rc = -1; break;
   case 'V': bind = STB_WEAK;   stype = STT_NOTYPE; break;
   case 'W': bind = STB_WEAK;   stype = STT_NOTYPE; break;
+#if 0
   case 'a': bind = STB_LOCAL;  stype = STT_NOTYPE; break;
   case 'b': bind = STB_LOCAL;  stype = STT_OBJECT; break;
   case 'c': bind = STB_LOCAL;  stype = STT_NOTYPE; break;
@@ -56,6 +57,22 @@ kld_sym_init_from_kallsyms(kld_sym *this, uintptr_t addr, char *name,
   case 'u': assert(0); rc = -1; break;
   case 'v': bind = STB_WEAK;   stype = STT_NOTYPE; break;
   case 'w': bind = STB_WEAK;   stype = STT_NOTYPE; break;
+#else
+    // for the moment strip local symbols as they
+    // do not belong in .dynsyms
+  case 'a': 
+  case 'b': 
+  case 'c': 
+  case 'd': 
+  case 'i': 
+  case 'n': 
+  case 'r': 
+  case 't': 
+  case 'u': 
+  case 'v': 
+  case 'w':
+    rc = -1; break;
+#endif    
   default:
     fprintf(stderr, "Unsupported type: %c\n", type);
     assert(0);
@@ -65,7 +82,7 @@ kld_sym_init_from_kallsyms(kld_sym *this, uintptr_t addr, char *name,
   if (rc>=0) {
     this->name    = strdup(name); // name string to be placed in string table
     sym->st_name  = -1;           // no string table index yet
-    sym->st_info  = GELF_ST_INFO(bind, stype); // encode binding ant type
+    sym->st_info  = GELF_ST_INFO(bind, stype); // encode binding any type
     sym->st_shndx = SHN_ABS;      // we encode all symbols in the abs section
     sym->st_value = addr;         // value of symbol
     sym->st_size  = 0;     
@@ -85,6 +102,10 @@ kld_sym_init_from_sym(kld_sym *this, const GElf_Sym *isym, Elf *elf,
 
   // filter out undefined symbols ... add more conditions as needed
   if (isym->st_shndx == SHN_UNDEF) {
+    rc = -1;
+    goto done;
+  }
+  if (GELF_ST_BIND(isym->st_info) == STB_LOCAL) {
     rc = -1;
     goto done;
   }

@@ -283,7 +283,10 @@ rtdir=$(realpath --relative-to=$PWD $tmpdir)
 
 [[ ! -a app.h ]] && ln -s $rtdir/app.h .
 
-[[ -a $rtdir/$target ]] && mv $rtdir/$target $curdir/$target
+[[ -a $rtdir/$target ]] && {
+    mv $rtdir/$target $curdir/$target
+    ${kld} -k $target
+}
 [[ -a $rtdir/Module.symvers ]] && mv $rtdir/Module.symvers $curdir/Module.symvers
 
 exit 0

@@ -1,18 +1,20 @@
 #include "incs.h"
 
 globals_t GBLS = {
-  .bos            = NULL,
+  .bosbypath      = NULL,
+  .bosbymod       = NULL,
   .executable     = NULL,
   .kotblfile      = KOTBL_DFLT,
   .dirs           = NULL,
   .fsname         = FSNAME_DFLT,
+  .libkernpath    = NULL,
   .pathprefix     = PATHPREFIX_DFLT,
   .pid            = 0,
   .dirc           = 0,
   .dirmax         = 0,
   .verbose        = 0,
   .startfs        = 0,
-  .prockallsyms   = 1,
+  .prockallsyms   = 0,
   .procbos        = 1
 };
 
@@ -20,17 +22,19 @@ static void
 usage(char *name, FILE *fp)
 {
   fprintf(fp,
-	  "%s [-h] [-v] [-N] [-K dir] [-k kofile[,modnm[,kldopts]]] "
-	  "[-o kotblfile] [elf]\n"
+	  "%s [-h] [-v] [-O lib] [-K dir] "
+	  "[-k kofile[,modnm[,kldopts]]] "
+	  "[Elf]\n"
 	  "   -h     : print this usage message\n"
 	  "   -v     : verbose operation\n"
-	  "   -N     : supress creating shared libraries from symbols in"
-	  " /proc/kallsysms\n"
+	  "   -O lib : create kernel so as lib for %s "
+	  "(default:%s) implys '-k %s' (see below).\n"
 	  "   -K dir : add a directory to search for ko files"
 	  " (can be repeated)\n"
 	  "   -k ko  : create a shared libk library for the ko "
 	  "(can be repeated)\n"
-	  "   -o kotblfile: file to output binary kotbl (default: %s)\n"
+	  "   -k /proc/kallsyms: create a shared library from\n"
+	  "                      exported kernel runtime symbols\n"
 	  "   elf    : optional elf file to process as follows:\n"
 	  "              For each libk found in the elf:\n"
 	  "                 find coresponding ko and load it\n"
@@ -40,30 +44,45 @@ usage(char *name, FILE *fp)
 	  "                 extract ko and load\n"
 	  "                 update the libk symbol table with runtime"
 	  " addresses\n",
-	  basename(name), KOTBL_DFLT);
+	  basename(name), KALLSYMSPATH, LIBKERNPATH_DFLT, KALLSYMSPATH);
 }
 
 static int
 openko(char *kofnm, char **kofullpath)
 {
-  int fd, i;
-  char *fullpath=malloc(PATH_MAX); // avoid large stack alloc
+  int fd=-1, i;
+  char *fullpath;
   
-  *kofullpath = NULL;
-  for (i=0; i<GBLS.dirc; i++) {
-    snprintf(fullpath, PATH_MAX, "%s/%s", GBLS.dirs[i], kofnm);
+  if (kofnm[0] == '/') {
+    // kofnm is absolute
+    fullpath = kofnm;
     fd = open(fullpath, O_RDONLY|O_CLOEXEC);
-    if (fd != -1) break;
+  } else  {
+    fullpath=malloc(PATH_MAX); // avoid large stack alloc
+    assert(fullpath);
+    
+    assert(GBLS.dirc > 0); // we expect at least one directory to check
+    *kofullpath = NULL;
+    for (i=0; i<GBLS.dirc; i++) {
+      snprintf(fullpath, PATH_MAX, "%s/%s", GBLS.dirs[i], kofnm);
+      fd = open(fullpath, O_RDONLY|O_CLOEXEC);
+      if (fd != -1) {
+	VPRINT("Found %s in %s (%d:%s) fd:%d.\n", kofnm, GBLS.dirs[i], i,
+	       fullpath, fd);
+	break;
+      }
+    }
   }
   if (fd != -1) {
-    *kofullpath = realpath(fullpath,NULL);
-    VPRINT("Found %s in %s (%d:%s) fd:%d.\n", kofnm, GBLS.dirs[i], i,
-	   *kofullpath, fd);
+    *kofullpath = realpath(fullpath, NULL);
+    VPRINT("%s: fullpath:%s->realpath:%s fd:%d.\n", kofnm,
+	   fullpath, *kofullpath, fd);
+
   } else {
     fprintf(stderr, "ERROR:%s:%s:%d:%s\n", __func__, kofnm,
 	    errno, strerror(errno));
   }
-  free(fullpath);
+  if (fullpath != kofnm) free(fullpath);
   return fd;
 }
 
@@ -73,7 +92,7 @@ openso(char *kofnm, char *modnm, char **sofullpath)
   int fd;
   char *tmp=NULL;
   char *fullpath=malloc(PATH_MAX); // avoid large stack alloc
-
+  assert(fullpath);
   
   if (kofnm && modnm) {
     tmp = strdup(kofnm);
@@ -115,7 +134,8 @@ static char
 }
 
 static int
-parsekospec(const char *kospec, char **fnm, char **kldopts, char **modnm)
+parsekospec(const char *kospec, char **fnm, char **kldopts,
+	    char **modnm)
 {
   int   commas = 0;
   char *tmp    = strdup(kospec);
@@ -157,8 +177,10 @@ parsekospec(const char *kospec, char **fnm, char **kldopts, char **modnm)
     *kldopts = (*o == '\0') ? strdup(KLDOPTS_DFLT) : strdup(o);
   }
   
-  VLPRINT(2, "%s: fnm:%s modnm:%s kldopts:%s\n", kospec, *fnm, *modnm, *kldopts);
+  VLPRINT(2, "%s: fnm:%s modnm:%s kldopts:%s\n", kospec, *fnm,
+	  *modnm, *kldopts);
 done:
+  if (rc<0) free(tmp);
   return rc;
 }
 
@@ -166,7 +188,8 @@ static bo_t *
 newbo(char *kofullpath, char *modnm, char *kldopts, int kofd,
       char *sofullpath, int sofd)
 {
-  bo_t *bo = malloc(sizeof(bo_t));  
+  bo_t *bo = malloc(sizeof(bo_t));
+  assert(bo);
   bo->kofnm   = kofullpath;
   bo->modnm   = modnm;
   bo->kldopts = kldopts;
@@ -193,49 +216,60 @@ static void
 dumpbo(bo_t *bo)
 {
   EPRINT(stderr, "bo:%p mod:%s kldopts:%s ko:%s (%d) so:%s (%d)\n",
-	 bo, bo->modnm, bo->kldopts, bo->kofnm, bo->kofd, bo->sofnm, bo->sofd);
+	 bo, bo->modnm, bo->kldopts, bo->kofnm, bo->kofd, bo->sofnm,
+	 bo->sofd);
 }
 
 static int
-addbo(const char *kospec)
+addbo(char *kofnm,char *kldopts,char *modnm)
 {
   bo_t *bo=NULL;
-  char *kofnm, *kldopts, *modnm;
-  char *kofullpath, *sofullpath; 
+  char *kofullpath=NULL, *sofullpath=NULL; 
   int   kofd=-1, sofd=-1, rc=0;
 
-  kofnm = kldopts = modnm = kofullpath = sofullpath = NULL;
-  
-  if (parsekospec(kospec, &kofnm, &kldopts, &modnm) < 0) { rc = -1; goto done; }
+  kofullpath = sofullpath = NULL;
   
   kofd = openko(kofnm, &kofullpath);
-  if (kofd < 0) { rc = -1; goto done; } 
-
-  sofd = openso(kofullpath, modnm, &sofullpath);
-  if (sofd < 0) { rc = -1; goto done; }
+  if (kofd < 0) { rc = -2; goto done; } 
   
-  HASH_FIND_STR(GBLS.bos, kofullpath, bo);
+  sofd = openso(kofullpath, modnm, &sofullpath);
+  if (sofd < 0) { rc = -2; goto done; }
+  
+  HASH_FIND(hhpath, GBLS.bosbypath, kofullpath, strlen(kofullpath),
+	    bo);
   
   if (bo) {
-    fprintf(stderr, "WARNING: %s already specified ignoring %s\n",
-	    kofullpath, kospec);
+    if (strcmp(bo->sofnm, sofullpath)!=0) unlink(sofullpath);
+    fprintf(stderr, "WARNING: %s already specified ignoring\n",
+	    kofullpath);
     rc = -1;
     goto done;
   }
 
+  HASH_FIND(hhmod, GBLS.bosbymod, modnm, strlen(modnm), bo);
+  if (bo) {
+    unlink(sofullpath); // rm the ignored ko's so
+    fprintf(stderr, "WARNING: %s already specified ignoring\n",
+	   modnm);
+    rc = -1;
+    goto done;
+  }
+  
   bo = newbo(kofullpath, modnm, kldopts, kofd, sofullpath, sofd);
-  HASH_ADD_KEYPTR(hh, GBLS.bos, bo->kofnm, strlen(bo->kofnm), bo);
-
+  HASH_ADD_KEYPTR(hhpath, GBLS.bosbypath, bo->kofnm,
+		  strlen(bo->kofnm), bo);
+  HASH_ADD_KEYPTR(hhmod, GBLS.bosbymod, bo->modnm,
+		  strlen(bo->modnm), bo);
+  
   if (GBLS.verbose>1) {
-    VPRINT("Added ob: %d total obs:\n", HASH_COUNT(GBLS.bos));
+    VPRINT("Added ob: %d (%d)total obs:\n",
+	   HASH_CNT(hhpath, GBLS.bosbypath),
+	   HASH_CNT(hhmod, GBLS.bosbymod));
     dumpbo(bo);
   }
 done:
-  if (kofnm)              free(kofnm);
   if (rc<0 && kofd != -1) close(kofd);
   if (rc<0 && sofd != -1) close(sofd);
-  if (rc<0 && kldopts)    free(kldopts);
-  if (rc<0 && modnm)      free(modnm);
   if (rc<0 && kofullpath) free(kofullpath);
   if (rc<0 && sofullpath) free(sofullpath);
   return rc;
@@ -250,6 +284,7 @@ addDir(char *dir)
     if (GBLS.dirc == GBLS.dirmax) {
       GBLS.dirmax = (GBLS.dirmax) ? (GBLS.dirmax << 1) : 256;
       GBLS.dirs   = realloc(GBLS.dirs, GBLS.dirmax * sizeof(char *));
+      assert(GBLS.dirs);
     }
     GBLS.dirs[GBLS.dirc] = dir;
     GBLS.dirc++;
@@ -286,35 +321,48 @@ GBLSInit(int argc, char **argv)
   }
   addDir(GBLS.cwd);
   
-  while ((opt = getopt(argc, argv, "K:k:Nhv")) != -1) {
+  while ((opt = getopt(argc, argv, "K:k:O:hv")) != -1) {
     switch (opt) {
     case 'K':
       addDir(optarg);
       break;
-    case 'N':
-      GBLS.prockallsyms = 0;
+    case 'O':
+      GBLS.prockallsyms = 1;
+      GBLS.libkernpath = realpath(optarg, NULL);  // static memory
       break;
     case 'h':
       usage(argv[0],stderr);
       return -1;
     case 'k':
-      if (kospecc == kospecmax) {
-	kospecmax = (kospecmax) ? kospecmax << 1 : 2;
-	kospec    = realloc(kospec, sizeof(char *)*kospecmax);
-	memset(&kospec[kospecc], 0, kospecmax - kospecc);
+      if (strcmp(KALLSYMSPATH, optarg) == 0) {
+	// handle /proc/kallsysms as special case
+	GBLS.prockallsyms = 1;
+      }  else {
+	if (kospecc == kospecmax) {
+	  kospecmax = (kospecmax) ? kospecmax << 1 : 2;
+	  kospec    = realloc(kospec, sizeof(char *)*kospecmax);
+	  assert(kospec);
+	  memset(&kospec[kospecc], 0,
+		 (kospecmax - kospecc)*sizeof(char *));
+	}
+	kospec[kospecc] = optarg;
+	kospecc++;
       }
-      kospec[kospecc] = optarg;
-      kospecc++;
       break;
     case 'v':
       GBLS.verbose++;
       break;
     default:
       usage(argv[0],stderr);
-      return -1;
+      rc = -1;
+      goto done;
     }
   }
 
+  if (GBLS.libkernpath==NULL) {
+    GBLS.libkernpath = realpath(LIBKERNPATH_DFLT, NULL);
+  }
+  
   if (GBLS.verbose) {
     VPRINT("%d Directories to searched:\n", GBLS.dirc);
     for (int i=0; i<GBLS.dirc; i++) {
@@ -327,21 +375,42 @@ GBLSInit(int argc, char **argv)
   }
 
   for (int i=0; i<kospecc; i++) {
-    if (addbo(kospec[i])<0) {
-      rc=-1;
+    char *kofnm, *kldopts, *modnm;
+    kofnm = kldopts = modnm = NULL;
+    if (parsekospec(kospec[i], &kofnm, &kldopts, &modnm) < 0) {
+      rc = -2;
       goto done;
     }
+    if (addbo(kofnm, kldopts, modnm)<0) {
+      assert(0);
+      if (kldopts) free(kldopts);
+      if (modnm)   free(modnm);
+      rc = -1; goto done;
+    }
+    if (kofnm) free(kofnm);
   }
-
 
   int anum=argc-optind;
   char **args=&(argv[optind]);
-    
+
+  if (GBLS.prockallsyms==0 &&
+      HASH_CNT(hhpath, GBLS.bosbypath) == 0 &&
+      anum < 1) {
+    fprintf(stderr, "kld: no input files\n");
+    rc = -1;
+    goto done;
+  }
+  
   if (anum >= 1) {
+    if (kospecc) {
+      fprintf(stderr, "ERROR: executable and ko specified.\n");
+      rc = -1;
+      goto done;
+    }
     GBLS.executable = args[0];
     VLPRINT(2, "GBLS.executable=%s\n", GBLS.executable);
   }
-  
+
   if (GBLS.startfs) {
     GBLS.pid = getpid();
     assert(fsInit(&GBLS.fs,
@@ -357,14 +426,14 @@ done:
 }
 
 static void
-cleanupEntries(kld_sym *entries, ssize_t n)
+cleanupEntries(kld_sym *entries, size_t n)
 {
-  for (int i=0; i<n; i++) free(entries[i].name);
+  for (size_t i=0; i<n; i++) free(entries[i].name);
   free(entries);
 }
 
 static void
-writeso(const char *path, int fd, const kld_sym *entries, ssize_t n,
+writeso(const char *path, int fd, const kld_sym *entries, size_t n,
 	 size_t nmstrlen)
 {
   int mfd;
@@ -378,10 +447,16 @@ writeso(const char *path, int fd, const kld_sym *entries, ssize_t n,
     // Example: Write the mapped buffer to a file
     if (fd==-1) {
       dfd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+      if (dfd == -1) {
+	perror(path);
+	goto done;
+      }
     } 
-    write(dfd, elf_ptr, elf_size);
+    ssize_t nw = write(dfd, elf_ptr, elf_size);
+    assert(nw>0 && (size_t)nw==elf_size);
     if (fd == -1) close(dfd);
-    
+
+ done:
     // Cleanup mapping
     munmap(elf_ptr, elf_size);
     close(mfd);
@@ -424,7 +499,7 @@ static int
 openKallsyms(FILE **fp)
 {
   FILE      *fp_;
-  fp_ = fopen("/proc/kallsyms", "r");
+  fp_ = fopen(KALLSYMSPATH, "r");
   if (fp_ == NULL) {
     warn(__FUNCTION__);
     return -1;
@@ -465,7 +540,7 @@ prcKallsyms(const char *pathprefix, FILE *fp)
   while (getline(&line, &len, fp) != -1 ) {
     sym_start = sym_end = mod_start = mod_end = 0;
     name = module = NULL;
-    n = sscanf(line, "%" SCNx64 " %c %n%*s%n %n%*s%n", &addr, &type,
+    n = sscanf(line, "%" SCNxPTR " %c %n%*s%n %n%*s%n", &addr, &type,
 	       &sym_start, &sym_end, &mod_start, &mod_end);
     if (n>=2) {
       name = &line[sym_start];
@@ -478,24 +553,33 @@ prcKallsyms(const char *pathprefix, FILE *fp)
 	    line[mod_end-1] == ']') line[mod_end-1] = '\0';
 	line[mod_end] = '\0'; // Null-terminate str2 in-place
 	// add symbol to appropriate module symbol entries
-	// printf("%d: addr:0x%" PRIx64 " type:%c symbol:%s module:%s\n",
-	// n, addr, type, name, module);
+	// printf("%d: addr:0x%" PRIx64 " type:%c symbol:%s"
+	//        " module:%s\n",n, addr, type, name, module);
 	struct Module *mod = NULL;
 	HASH_FIND_STR(mhash, module, mod);
 	if (mod==NULL) {
+	  // only process modules that we are intrested in
+	  bo_t *bo      = NULL;
+	  HASH_FIND(hhmod, GBLS.bosbymod, module, strlen(module), bo);
+	  if (bo == NULL) continue;
+	  
 	  mod           = malloc(sizeof(struct Module));
+	  assert(mod);
 	  mod->name     = strdup(module);
 	  mod->syms_n   = 0;
 	  mod->syms_i   = 0;
 	  mod->nmstrlen = 0;
 	  mod->entries  = NULL;
-	  // memset(mod->entries, 0, sizeof(mod->syms_n * sizeof(SymbolEntry)));
-	  HASH_ADD_KEYPTR(hh, mhash, mod->name, strlen(mod->name), mod);
+          // memset(mod->entries, 0,
+	  //        sizeof(mod->syms_n * sizeof(SymbolEntry)));
+	  HASH_ADD_KEYPTR(hh, mhash, mod->name, strlen(mod->name),
+			  mod);
 	}
 	if (mod->syms_i == mod->syms_n) {
 	  mod->syms_n = (mod->syms_n) ? mod->syms_n << 1 : 1024;
 	  mod->entries = realloc((void *)mod->entries,
 				 mod->syms_n*sizeof(kld_sym));
+	  assert(mod->entries);
 	  // for good measure zero out new memory
 	  memset(&(mod->entries[mod->syms_i]), 0,
 		 (mod->syms_n - mod->syms_i) * sizeof(kld_sym));
@@ -507,16 +591,19 @@ prcKallsyms(const char *pathprefix, FILE *fp)
 	}
       } else {
 	// add to libkern.so symbol entries
-	// printf("%d: addr:0x%" PRIx64 " type:%c symbol:%s\n", n, addr,
-	// type, name);
+	// printf("%d: addr:0x%" PRIx64 " type:%c symbol:%s\n",
+	//        n,addr, type, name);
 	if (ksyms_i == ksyms_n) {
 	  ksyms_n = (ksyms_n) ? ksyms_n << 1 : 1024;
-	  kentries = realloc((void *)kentries, ksyms_n*sizeof(kld_sym));
+	  kentries = realloc((void *)kentries,			     
+			     ksyms_n*sizeof(kld_sym));
+	  assert(kentries);
 	  // for good measure zero out new memory
 	  memset(&(kentries[ksyms_i]), 0,
 		 (ksyms_n - ksyms_i) * sizeof(kld_sym));
 	}
-	if (kld_sym_init_from_kallsyms(&kentries[ksyms_i],addr, name, type)>=0) {
+	if (kld_sym_init_from_kallsyms(&kentries[ksyms_i],addr, name,
+				       type)>=0) {
 	  knmstrlen += nmlen;
 	  ksyms_i++;
 	}
@@ -526,10 +613,11 @@ prcKallsyms(const char *pathprefix, FILE *fp)
   
   if (ksyms_i) {
     char *path=malloc(PATH_MAX);
+    assert(path);
     if (pathprefix) {
-      snprintf(path, PATH_MAX, "%s/libkern.so", pathprefix);
+      snprintf(path, PATH_MAX, "%s/%s", pathprefix, GBLS.libkernpath);
     } else {
-      snprintf(path, PATH_MAX, "libkern.so");
+      snprintf(path, PATH_MAX, "%s", GBLS.libkernpath);
     }
     writeso(path, -1, kentries, ksyms_i, knmstrlen);
     cleanupEntries(kentries, ksyms_i);
@@ -538,7 +626,8 @@ prcKallsyms(const char *pathprefix, FILE *fp)
   
   {
     char *path=malloc(PATH_MAX);
-    const struct Module *mod, *tmp;
+    assert(path);
+    struct Module *mod, *tmp;
     HASH_ITER(hh, mhash, mod, tmp) {
       if (pathprefix) {
 	snprintf(path, PATH_MAX, "%s/lib%s.so", pathprefix, mod->name);
@@ -574,8 +663,9 @@ static void
 bosCleanup()
 {
   bo_t *bo, *tmp;
-  HASH_ITER(hh, GBLS.bos, bo, tmp) {
-    HASH_DEL(GBLS.bos, bo);
+  HASH_ITER(hhpath, GBLS.bosbypath, bo, tmp) {
+    HASH_DELETE(hhpath, GBLS.bosbypath, bo);
+    HASH_DELETE(hhmod, GBLS.bosbymod, bo);
     deletebo(bo);
     free(bo);
   }
@@ -589,35 +679,36 @@ cleanup(void)
     sigprocCleanup(&(GBLS.sigproc));
   }
   
-  if (GBLS.bos) {
+  if (GBLS.bosbypath) {
     bosCleanup();
-    GBLS.bos = NULL;
+    GBLS.bosbypath = NULL;
+    GBLS.bosbymod  = NULL; 
   }
   if (GBLS.dirs) {
     free(GBLS.dirs);
     GBLS.dirs = NULL;
   }
-  
+
+  if (GBLS.libkernpath) free(GBLS.libkernpath);
 }
 
 static int
 prcBO(bo_t *bo)
 {
-  int i=0, rc      = 0;
+  int  rc = 0;
   kld_sym *entries = NULL;
-  size_t   n, nmstrlen;
+  size_t   n=0, nmstrlen=0;
   
   if (GBLS.verbose) {
-    VPRINT("Processing ko (%d):\n",i);
+    VPRINT("Processing bo (%p):\n", bo);
     dumpbo(bo);
-    i++;
   }
   if (kld_read_elf_syms(bo->kofnm, bo->kofd, &entries, &n, &nmstrlen)<0) {
     rc = -1;
     goto done;
   }
   writeso(bo->sofnm, bo->sofd, entries, n, nmstrlen);
-  VPRINT("%s: read %lu symbols\n", bo->kofnm, n);
+  VPRINT("%s: read %zu symbols\n", bo->kofnm, n);
 
  done:
   if (entries) cleanupEntries(entries,n);
@@ -683,11 +774,15 @@ prcExec(const char *exec)
       if (n == 0) break;
       nn+=n;
       VLPRINT(2, "kotbl[%d]: fnm:%s modnm:%s opts:%s\n", i, fnm, modnm, opts);
-      if (fnm) free(fnm);
-      if (modnm) free(modnm);
-      if (opts) free(opts);
+      if (strcmp(modnm, KALLSYMSPATH)==0) {
+	GBLS.libkernpath = fnm;
+      } else if (addbo(fnm, opts, modnm) <0) {
+	assert(0);
+      }
+      i++;
     }
     kld_close_elf_secdata(&sd);
+    if (i) GBLS.prockallsyms = 1;
   }
   
   return rc;
@@ -697,44 +792,57 @@ int
 main(int argc, char **argv)
 {
   FILE *ksfp;
+  FILE *kotblf;
   
   if (GBLSInit(argc, argv)<0) {
     EEXIT();
   }
 
-  atexit(cleanup);    // from this point on exits will trigger cleanups
+  atexit(cleanup);  // from this point on exits will trigger cleanups
   
   if (GBLS.executable) {
     prcExec(GBLS.executable);
-  }
-
-  // process each of the bo's found either from command line or
-  // from the executable
-  if (GBLS.procbos && HASH_COUNT(GBLS.bos)) {
-    FILE *kotblf = fopen(GBLS.kotblfile, "w");
+  } else {
+    kotblf = fopen(GBLS.kotblfile, "w");
     if (kotblf == NULL) {
       perror("Error opening file");
       return EXIT_FAILURE;
     }
-    bo_t *bo, *tmp;
-    HASH_ITER(hh, GBLS.bos, bo, tmp) {
-      // use null as seperators to allow paths to contain all valid ascii chars
-      // including whitespaces chars and newlines 
-      prcBO(bo);
-      size_t n = strlen(bo->kofnm);
-      assert(1==fwrite(bo->kofnm,n,1,kotblf));
-      assert(1==fwrite("\0",1,1,kotblf));
-      n = strlen(bo->modnm);
-      assert(1==fwrite(bo->modnm,n,1,kotblf));
-      assert(1==fwrite("\0",1,1,kotblf));
-      n = strlen(bo->kldopts);
-      assert(1==fwrite(bo->kldopts,n,1,kotblf));
-      assert(1==fwrite("\0",1,1,kotblf));
+    // process each of the bo's found either from command line or
+    // from the executable
+    if (GBLS.procbos && HASH_CNT(hhpath, GBLS.bosbypath)) {
+      bo_t *bo, *tmp;
+      HASH_ITER(hhpath, GBLS.bosbypath, bo, tmp) {
+	// use null as seperators to allow paths to contain all valid 
+	// ascii chars including whitespaces chars and newlines 
+	if (prcBO(bo)==0) {
+	  size_t n = strlen(bo->kofnm);
+	  assert(1==fwrite(bo->kofnm,n,1,kotblf));
+	  assert(1==fwrite("\0",1,1,kotblf));
+	  n = strlen(bo->modnm);
+	  assert(1==fwrite(bo->modnm,n,1,kotblf));
+	  assert(1==fwrite("\0",1,1,kotblf));
+	  n = strlen(bo->kldopts);
+	  assert(1==fwrite(bo->kldopts,n,1,kotblf));
+	  assert(1==fwrite("\0",1,1,kotblf));
+	} else {
+	  fprintf(stderr, "ERROR: failed to process bo:%s %s %s\n",
+		  bo->kofnm, bo->modnm, bo->kldopts);
+	}
+      }
+      if (GBLS.prockallsyms) {
+	size_t n = strlen(GBLS.libkernpath);
+	assert(1==fwrite(GBLS.libkernpath,n,1,kotblf));
+	assert(1==fwrite("\0",1,1,kotblf));
+	n = strlen(KALLSYMSPATH);
+	assert(1==fwrite(KALLSYMSPATH,n,1,kotblf));
+	assert(1==fwrite("\0",1,1,kotblf));
+	assert(1==fwrite("\0",1,1,kotblf));
+      }
+      fclose(kotblf);
     }
-    fclose(kotblf);
   }
   
-
   // we do this last so that ko loads will be reflected in so updates
   if (GBLS.prockallsyms) {
     if (openKallsyms(&ksfp)<0) {
