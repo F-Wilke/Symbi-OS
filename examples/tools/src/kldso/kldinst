@@ -1,4 +1,5 @@
 #!/bin/bash
+#set -x
 typeset -r KOTBL=${KOTBL:-kotbl.bin}
 scriptdir=$(dirname $(realpath $0))
 interp=${KLDSO:-${scriptdir}/kld.so}
