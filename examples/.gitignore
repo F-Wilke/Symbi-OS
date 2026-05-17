@@ -3,4 +3,5 @@
 libextension.a
 .gdb_history
 *.bin
-Module.symvers
+*Module.symvers
+
