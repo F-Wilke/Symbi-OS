@@ -31,6 +31,7 @@
 #include "globals.h"
 #include "misc.h"
 #include "kldelf.h"
+#include "modinfo.h"
 #include "kldfs.h"
 
 

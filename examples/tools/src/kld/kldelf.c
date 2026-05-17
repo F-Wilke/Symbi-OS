@@ -344,14 +344,14 @@ cleanup:
 }
 
 extern void
-kld_close_elf_secdata(kld_secdata *sd)
+kld_close_elf_secdata(kld_secdata *sd, int fd)
 {
   if (!sd) return;
   if (sd->elf) {
     elf_end((Elf *)sd->elf);
     sd->elf = NULL;
   }
-  if (sd->fd >= 0) {
+  if (sd->fd != fd && sd->fd >= 0) {
     close(sd->fd);
     sd->fd = -1;
   }

@@ -1,4 +1,4 @@
-SRCS       := main.c kldfs.c fs.c sigproc.c kldelf.c
+SRCS       := main.c kldfs.c fs.c sigproc.c kldelf.c modinfo.c loadbo.c
 OBJS       := $(SRCS:%.c=%.o)
 O          := 0
 CFLAGS     += -g -O${O} -std=gnu99 -MD -MP -Wall -Werror $(shell pkg-config fuse3 --cflags) 
@@ -32,6 +32,9 @@ mklibstubs: kldelf.c
 
 listlibs: listlibs.c
 	${CC} -DMAIN $< -o $@ -lelf
+
+modinfo: modinfo.c modinfo.h incs.h kldelf.o
+	 gcc ${CFLAGS} -DMAIN -o $@ $< kldelf.o -lelf
 
 readsymtbl: readsymtbl.c
 	${CC} -g $< -o $@ -lelf
