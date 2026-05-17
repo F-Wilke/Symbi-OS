@@ -325,6 +325,7 @@ done:
   mutex_unlock(&evac_mutex);
   return rc;
 }
+EXPORT_SYMBOL(acquire_exclusive_cpu);
 
 void release_exclusive_cpu(long reserved_cpu)
 {
@@ -349,3 +350,4 @@ void release_exclusive_cpu(long reserved_cpu)
   pr_info("EVAC: Task %d released CPU %ld\n", current->pid, reserved_cpu);
   mutex_unlock(&evac_mutex);
 }
+EXPORT_SYMBOL(release_exclusive_cpu);

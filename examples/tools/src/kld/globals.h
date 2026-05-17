@@ -6,9 +6,16 @@
 #define FSNAME_DFLT      "libk"
 #define PATHPREFIX_DFLT  (NULL)
 #define LIBKERNPATH_DFLT "libkern.so"
-#define KLDOPTS_DFLT     "EXCLUSIVE"
 #define SOPERM_DFLT      (0644)
 #define KALLSYMSPATH     "/proc/kallsyms"
+enum {
+  KLDOPT_NONE    = 0,
+  KLDOPT_SHARED  = 1<<0,
+  KLDOPT_PERPROC = 1<<1,
+  KLDOPT_RELOAD  = 1<<2
+};
+#define KLDOPTS_DFLT     (KLDOPT_RELOAD)
+typedef uint64_t kldopts_t;
 
 // Binary Object
 //   kld works with binary objects that are both represented by
@@ -21,9 +28,15 @@ typedef struct {
   char          *kofnm;      // kernel object (ko) full canonical path
   char          *sofnm;      // share object (so) full cononical path
   char          *modnm;      // module name
-  char          *kldopts;    // kld options
+  char          *komodnm;    // compiled-in name from .moodinfo (NULL
+                             // if not forced or not yet read)
+  char          *kldoptstr;  // kld options string  (if overridden
+                             // from those specified in modinfo)
+  kldopts_t      kldopts;    // parsed kld options
   int            kofd;       // fd of kofnm once opened 
   int            sofd;       // fd of sofnm once opened
+  int            forcemodnm; // modnm is forced recored in kotbl
+  int            loaded;     // 1 = loaded
 } bo_t; 
   
 typedef struct {
@@ -37,7 +50,6 @@ typedef struct {
   char **   dirs;           // directory search array 
   char *    fsname;         // default name for file system mount poinxot dirname
   char *    libkernpath;    // name for lib kernel so
-  char *    pathprefix;     // path prefix for default outputs eg. libkern.so
   pid_t     pid;            // pid of this process (useful for fs interface)
   int       dirc;           // count of ko entries in bo directory search array
   int       dirmax;         // maximum size of bo directory seaarch array 
@@ -46,7 +58,6 @@ typedef struct {
   int       prockallsyms;   // boolean create so for kallsyms
   int       procbos;        // boolean create so's for all named bo's
 } globals_t;
-
 extern globals_t GBLS;
 
 #endif

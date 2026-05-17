@@ -135,6 +135,6 @@ extern int   kld_read_elf_syms(const char *path, int fd, kld_sym **entries,
 			   size_t *n, size_t *nmstrlen);
 extern int   kld_open_elf_secdata(kld_secdata *sd, const char *path,
 			      int fd, const char *scnm);
-extern void  kld_close_elf_secdata(kld_secdata *sd);
+extern void  kld_close_elf_secdata(kld_secdata *sd, int fd);
 
 #endif

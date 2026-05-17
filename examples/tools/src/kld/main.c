@@ -8,7 +8,6 @@ globals_t GBLS = {
   .dirs           = NULL,
   .fsname         = FSNAME_DFLT,
   .libkernpath    = NULL,
-  .pathprefix     = PATHPREFIX_DFLT,
   .pid            = 0,
   .dirc           = 0,
   .dirmax         = 0,
@@ -45,6 +44,34 @@ usage(char *name, FILE *fp)
 	  "                 update the libk symbol table with runtime"
 	  " addresses\n",
 	  basename(name), KALLSYMSPATH, LIBKERNPATH_DFLT, KALLSYMSPATH);
+}
+
+struct KLDOPT_DESC {
+  char      *optstr;
+  kldopts_t  optval;
+} KLDOPT_TBL[] = {
+  { .optstr = "SHARED",  .optval = KLDOPT_SHARED  },
+  { .optstr = "PERPROC", .optval = KLDOPT_PERPROC },
+  { .optstr = "RELOAD",  .optval = KLDOPT_RELOAD  },
+  { .optstr =  NULL,     .optval = KLDOPT_NONE    }
+};
+  
+static kldopts_t
+parseOpts(char *kldoptstr)
+{
+  struct KLDOPT_DESC *optdesc;
+  kldopts_t           val = KLDOPT_NONE;
+  
+  for (optdesc = &(KLDOPT_TBL[0]);
+       optdesc->optstr != NULL;
+       optdesc++) {
+    if (strcmp(optdesc->optstr, kldoptstr) == 0) {
+      val = optdesc->optval;
+      break;
+    }
+  }
+  VLPRINT(2, "kld opt: %s -> %lu\n", kldoptstr, val); 
+  return val;
 }
 
 static int
@@ -115,6 +142,11 @@ openso(char *kofnm, char *modnm, char **sofullpath)
   return fd;
 }
 
+
+#if 0
+// not used
+// if you want to support using the file name as a default
+// then resurrect 
 static char
 *modnmfromfnm(char *fnm)
 {
@@ -132,6 +164,7 @@ static char
   free(tmp);
   return modnm;
 }
+#endif
 
 static int
 parsekospec(const char *kospec, char **fnm, char **kldopts,
@@ -165,16 +198,16 @@ parsekospec(const char *kospec, char **fnm, char **kldopts,
   *fnm = f;
   switch (commas) {
   case 0:
-    *modnm   = modnmfromfnm(f);
-    *kldopts = strdup(KLDOPTS_DFLT);
+    *modnm   = NULL;
+    *kldopts = NULL;
     break;
   case 1:
-    *modnm   = (*n == '\0') ? modnmfromfnm(f) : strdup(n);
-    *kldopts = strdup(KLDOPTS_DFLT);
+    *modnm   = (*n == '\0') ? NULL : strdup(n);
+    *kldopts = NULL;
     break;
   case 2:
-    *modnm   = (*n == '\0') ? modnmfromfnm(f) : strdup(n);
-    *kldopts = (*o == '\0') ? strdup(KLDOPTS_DFLT) : strdup(o);
+    *modnm   = (*n == '\0') ? NULL : strdup(n);
+    *kldopts = (*o == '\0') ? NULL : strdup(o);
   }
   
   VLPRINT(2, "%s: fnm:%s modnm:%s kldopts:%s\n", kospec, *fnm,
@@ -185,17 +218,22 @@ done:
 }
 
 static bo_t *
-newbo(char *kofullpath, char *modnm, char *kldopts, int kofd,
+newbo(char *kofullpath, char *modnm, char *komodnm, int forcemodnm,
+      kldopts_t kldopts, char *kldoptstr, int kofd,
       char *sofullpath, int sofd)
 {
   bo_t *bo = malloc(sizeof(bo_t));
   assert(bo);
-  bo->kofnm   = kofullpath;
-  bo->modnm   = modnm;
-  bo->kldopts = kldopts;
-  bo->kofd    = kofd;
-  bo->sofnm   = sofullpath;
-  bo->sofd    = sofd;
+  bo->kofnm      = kofullpath;
+  bo->modnm      = modnm;
+  bo->komodnm    = komodnm;
+  bo->forcemodnm = forcemodnm;
+  bo->kldopts    = kldopts;
+  bo->kldoptstr  = kldoptstr; 
+  bo->kofd       = kofd;
+  bo->sofnm      = sofullpath;
+  bo->sofd       = sofd;
+  bo->loaded     = 0;
   return bo;
 }
 
@@ -203,37 +241,90 @@ __attribute__((unused)) static void
 deletebo(bo_t *bo)
 {
   if (bo) {
-    if (bo->kofnm)     free(bo->kofnm);
-    if (bo->sofnm)     free(bo->sofnm);
-    if (bo->modnm)     free(bo->modnm);
-    if (bo->kldopts)   free(bo->kldopts);
-    if (bo->kofd >= 0) close(bo->kofd);
-    if (bo->sofd >= 0) close(bo->sofd);
+    if (bo->kofnm)     { free(bo->kofnm); bo->kofnm = NULL; }
+    if (bo->sofnm)     { free(bo->sofnm); bo->sofnm = NULL; }
+    if (bo->modnm)     { free(bo->modnm); bo->modnm = NULL; }
+    if (bo->komodnm)   { free(bo->komodnm); bo->komodnm = NULL; }
+    if (bo->kldoptstr) { free(bo->kldoptstr); bo->kldoptstr = NULL; }
+    if (bo->kofd >= 0) { close(bo->kofd); bo->kofd = -1; }
+    if (bo->sofd >= 0) { close(bo->sofd); bo->sofd = -1; }
   }
 }
 
 static void
 dumpbo(bo_t *bo)
 {
-  EPRINT(stderr, "bo:%p mod:%s kldopts:%s ko:%s (%d) so:%s (%d)\n",
-	 bo, bo->modnm, bo->kldopts, bo->kofnm, bo->kofd, bo->sofnm,
-	 bo->sofd);
+  EPRINT(stderr, "bo:%p mod:%s komodnm=%s kldopts:%lx ko:%s (%d) "
+	         "so:%s (%d) forcemodnm:%d loaded:%dn",
+	 bo, bo->modnm,  bo->komodnm, bo->kldopts, bo->kofnm,
+	 bo->kofd, bo->sofnm, bo->sofd, bo->forcemodnm, bo->loaded);
 }
 
 static int
-addbo(char *kofnm,char *kldopts,char *modnm)
+addbo(char *kofnm,char *kldopts,char *modnm, bo_t **thebo)
 {
-  bo_t *bo=NULL;
-  char *kofullpath=NULL, *sofullpath=NULL; 
-  int   kofd=-1, sofd=-1, rc=0;
-
-  kofullpath = sofullpath = NULL;
+  bo_t        *bo         = NULL;
+  kldopts_t    opts       = KLDOPT_NONE;
+  char        *komodnm    = NULL;
+  char        *kofullpath = NULL, *sofullpath=NULL;
+  char        *origmodnm  = modnm;
+  int          kofd =-1, sofd=-1, rc=0;
   
   kofd = openko(kofnm, &kofullpath);
-  if (kofd < 0) { rc = -2; goto done; } 
+  if (kofd < 0) { rc = -1; goto done; } 
+
+  if (modnm == NULL || kldopts == NULL) {
+    // cli / kotbl is not over riding all values in
+    // the modinfo so we must get them
+    kld_modinfo  mi         = {0};
+    rc = kld_read_modinfo(kofullpath, kofd, &mi);
+    if (rc < 0) {
+      VPRINT("WARNING: could not modinfo from %s\n", kofnm);
+    } else {
+      if (mi.name && mi.name[0]!='\0') {
+	if (modnm == NULL) { // use module name from modinfo
+	  modnm = strdup(mi.name);
+	  VLPRINT(2, "%s: mi.name=%s\n", kofnm, mi.name);
+	} else {
+	  // modnm forced; save compiled-in name for loadBO name
+	  // patching
+	  komodnm = strdup(mi.name);
+	}
+      }
+      if (kldopts == NULL) {// if not null will be taken care of below
+	// use kld opts from modinfo 
+	for (int i=0; i<mi.kld_count; i++) {
+	  opts |= parseOpts(mi.kld_vals[i]); 
+	}
+      }
+    }
+    kld_free_modinfo(&mi);
+  }
+  assert(modnm!=NULL);   // one way or another modnm must be set
+
+  if (kldopts) { // if kldopts str passed in use these
+    for (char *ob = kldopts, *oe = kldopts; ; oe++) {
+      if (*oe == '\0' && *ob != '\0') {
+	opts |= parseOpts(ob);
+	break;
+      }
+      if (*oe == '|') {
+	assert(*ob != '\0');
+	*oe = '\0';  // temporarily convert '|' to null
+	opts |= parseOpts(ob);
+	*oe = '|';   // restore '|'
+      }
+      oe++;
+    }
+  }
+    
+  if (opts == KLDOPT_NONE) {  // no options set by cli/kotbl or module
+    // then use defaults
+    opts = KLDOPTS_DFLT;
+  }
   
   sofd = openso(kofullpath, modnm, &sofullpath);
-  if (sofd < 0) { rc = -2; goto done; }
+  if (sofd < 0) { rc = -1; goto done; }
   
   HASH_FIND(hhpath, GBLS.bosbypath, kofullpath, strlen(kofullpath),
 	    bo);
@@ -255,7 +346,10 @@ addbo(char *kofnm,char *kldopts,char *modnm)
     goto done;
   }
   
-  bo = newbo(kofullpath, modnm, kldopts, kofd, sofullpath, sofd);
+  bo = newbo(kofullpath, modnm, komodnm, (origmodnm!=NULL), opts,
+	     kldopts, kofd, sofullpath, sofd);
+  // at this point bo contains all state of memory and fd's
+  // cleanup when bo deleted 
   HASH_ADD_KEYPTR(hhpath, GBLS.bosbypath, bo->kofnm,
 		  strlen(bo->kofnm), bo);
   HASH_ADD_KEYPTR(hhmod, GBLS.bosbymod, bo->modnm,
@@ -268,10 +362,18 @@ addbo(char *kofnm,char *kldopts,char *modnm)
     dumpbo(bo);
   }
 done:
-  if (rc<0 && kofd != -1) close(kofd);
-  if (rc<0 && sofd != -1) close(sofd);
-  if (rc<0 && kofullpath) free(kofullpath);
-  if (rc<0 && sofullpath) free(sofullpath);
+  if (rc<0) {
+    // on errors cleanup state 
+    if (origmodnm == NULL && modnm != NULL) free(modnm);
+    if (komodnm) free(komodnm);
+    if (kofullpath) free(kofullpath);
+    if (sofullpath) free(sofullpath);
+    if (kofd != -1) close(kofd); 
+    if (sofd != -1) close(sofd);
+    if (thebo) *thebo = NULL;
+  } else {
+    if (thebo) *thebo = bo;
+  }
   return rc;
 }
 
@@ -328,7 +430,7 @@ GBLSInit(int argc, char **argv)
       break;
     case 'O':
       GBLS.prockallsyms = 1;
-      GBLS.libkernpath = realpath(optarg, NULL);  // static memory
+      GBLS.libkernpath = optarg;  // static memory
       break;
     case 'h':
       usage(argv[0],stderr);
@@ -360,7 +462,7 @@ GBLSInit(int argc, char **argv)
   }
 
   if (GBLS.libkernpath==NULL) {
-    GBLS.libkernpath = realpath(LIBKERNPATH_DFLT, NULL);
+    GBLS.libkernpath = LIBKERNPATH_DFLT;
   }
   
   if (GBLS.verbose) {
@@ -381,13 +483,12 @@ GBLSInit(int argc, char **argv)
       rc = -2;
       goto done;
     }
-    if (addbo(kofnm, kldopts, modnm)<0) {
-      assert(0);
+    if (addbo(kofnm, kldopts, modnm, NULL)<0) {
+      if (kofnm)   free(kofnm);
       if (kldopts) free(kldopts);
       if (modnm)   free(modnm);
       rc = -1; goto done;
     }
-    if (kofnm) free(kofnm);
   }
 
   int anum=argc-optind;
@@ -463,6 +564,7 @@ writeso(const char *path, int fd, const kld_sym *entries, size_t n,
   }
 }
 
+#if 0
 /** FROM: Gemini
  * Creates directories recursively for a given path.
  * Returns 0 on success, -1 on failure.
@@ -494,6 +596,7 @@ int mkpath(const char *path, mode_t mode) {
     return 0;
 }
 /****/
+#endif
 
 static int
 openKallsyms(FILE **fp)
@@ -509,7 +612,7 @@ openKallsyms(FILE **fp)
 }
 
 static void
-prcKallsyms(const char *pathprefix, FILE *fp)
+prcKallsyms(FILE *fp, char **kernpath)
 {
   char *       line = NULL;
   size_t       len, nmlen, knmstrlen=0;
@@ -527,15 +630,12 @@ prcKallsyms(const char *pathprefix, FILE *fp)
     UT_hash_handle hh;
     kld_sym       *entries;
     char          *name;
+    bo_t          *bo;
     size_t         syms_n;
     size_t         syms_i;
     size_t         nmstrlen;
   } * mhash = NULL;
 
-  if (pathprefix && (mkpath(pathprefix, 0777)<0)) {
-    fprintf(stderr, "ERROR: %s invalid path.\n", pathprefix);
-    return;
-  }
   
   while (getline(&line, &len, fp) != -1 ) {
     sym_start = sym_end = mod_start = mod_end = 0;
@@ -566,10 +666,12 @@ prcKallsyms(const char *pathprefix, FILE *fp)
 	  mod           = malloc(sizeof(struct Module));
 	  assert(mod);
 	  mod->name     = strdup(module);
+	  mod->bo       = bo;
 	  mod->syms_n   = 0;
 	  mod->syms_i   = 0;
 	  mod->nmstrlen = 0;
 	  mod->entries  = NULL;
+	  
           // memset(mod->entries, 0,
 	  //        sizeof(mod->syms_n * sizeof(SymbolEntry)));
 	  HASH_ADD_KEYPTR(hh, mhash, mod->name, strlen(mod->name),
@@ -612,40 +714,25 @@ prcKallsyms(const char *pathprefix, FILE *fp)
   }
   
   if (ksyms_i) {
-    char *path=malloc(PATH_MAX);
-    assert(path);
-    if (pathprefix) {
-      snprintf(path, PATH_MAX, "%s/%s", pathprefix, GBLS.libkernpath);
-    } else {
-      snprintf(path, PATH_MAX, "%s", GBLS.libkernpath);
-    }
-    writeso(path, -1, kentries, ksyms_i, knmstrlen);
+    assert(GBLS.libkernpath);
+    writeso(GBLS.libkernpath, -1, kentries, ksyms_i, knmstrlen);
+    *kernpath = realpath(GBLS.libkernpath, NULL);
     cleanupEntries(kentries, ksyms_i);
-    free(path);
   }
   
   {
-    char *path=malloc(PATH_MAX);
-    assert(path);
     struct Module *mod, *tmp;
     HASH_ITER(hh, mhash, mod, tmp) {
-      if (pathprefix) {
-	snprintf(path, PATH_MAX, "%s/lib%s.so", pathprefix, mod->name);
-      } else {
-	snprintf(path, PATH_MAX, "lib%s.so", mod->name);
-      }
-      writeso(path, -1, mod->entries, mod->syms_i, mod->nmstrlen);
+      writeso(mod->bo->sofnm, mod->bo->sofd, mod->entries,
+	      mod->syms_i, mod->nmstrlen);
       cleanupEntries(mod->entries, mod->syms_i);
       free(mod->name);
       HASH_DEL(mhash, mod);
       free((struct Module *)mod);
     }
-    free(path);
   }
 
   free(line);
-  fclose(fp);
-  EEXIT();
 }
 
 static void
@@ -688,8 +775,8 @@ cleanup(void)
     free(GBLS.dirs);
     GBLS.dirs = NULL;
   }
-
-  if (GBLS.libkernpath) free(GBLS.libkernpath);
+  // not dynamic memory
+  // if (GBLS.libkernpath) free(GBLS.libkernpath);
 }
 
 static int
@@ -714,6 +801,8 @@ prcBO(bo_t *bo)
   if (entries) cleanupEntries(entries,n);
   return rc;
 }
+
+extern int loadBO(bo_t *bo);
 
 static size_t
 parsekotbl(char *kotblnxt,  char **kofnm, char **modnm, char **koopts)
@@ -760,7 +849,8 @@ prcExec(const char *exec)
 {
   kld_secdata sd;
   int rc = 0;
-  
+  bo_t *bo=NULL, **bos=NULL;
+  int bosi=0, bosn=0;
   rc = kld_open_elf_secdata(&sd, exec, -1, KOTBL_SEC);
   if (rc>=0) {
     VLPRINT(2, "%s:%s mapped\n", exec, KOTBL_SEC);
@@ -768,31 +858,52 @@ prcExec(const char *exec)
     size_t size = sd.size, n, nn=0;
     char *fnm, *modnm, *opts;
     int i=0;
+  
     while (nn<size) {
       fnm = modnm = opts = NULL;
       n = parsekotbl(&(kotbl[nn]), &fnm, &modnm, &opts);
       if (n == 0) break;
       nn+=n;
-      VLPRINT(2, "kotbl[%d]: fnm:%s modnm:%s opts:%s\n", i, fnm, modnm, opts);
-      if (strcmp(modnm, KALLSYMSPATH)==0) {
+      VLPRINT(2, "kotbl[%d]: fnm:%s modnm:%s opts:%s\n", i, fnm,
+	      modnm, opts);
+      if (modnm != NULL && strcmp(modnm, KALLSYMSPATH)==0) {
 	GBLS.libkernpath = fnm;
-      } else if (addbo(fnm, opts, modnm) <0) {
-	assert(0);
+      } else {
+	if (addbo(fnm, opts, modnm, &bo) <0) {
+	  assert(0);
+	  rc = -1;
+	  goto done;
+	} else {
+	  if (bosi==bosn) {
+	    bosn = (bosn==0) ? 16 : bosn<<1;
+	    bos  = realloc(bos, sizeof(bos[0])*bosn);
+	  }
+	  bos[bosi] = bo;
+	  bosi++;
+	}
       }
       i++;
     }
-    kld_close_elf_secdata(&sd);
+    kld_close_elf_secdata(&sd,-1);
     if (i) GBLS.prockallsyms = 1;
   }
+
   
+  for (int i=0; i<bosi; i++) {
+    if (loadBO(bos[i])<0) {
+      rc = -1;
+    }
+  }
+  if (bos) free(bos);
+ done:
   return rc;
 }
 
 int
 main(int argc, char **argv)
 {
-  FILE *ksfp;
-  FILE *kotblf;
+  FILE *ksfp   = NULL;
+  FILE *kotblf = NULL;
   
   if (GBLSInit(argc, argv)<0) {
     EEXIT();
@@ -819,39 +930,46 @@ main(int argc, char **argv)
 	  size_t n = strlen(bo->kofnm);
 	  assert(1==fwrite(bo->kofnm,n,1,kotblf));
 	  assert(1==fwrite("\0",1,1,kotblf));
-	  n = strlen(bo->modnm);
-	  assert(1==fwrite(bo->modnm,n,1,kotblf));
+	  if (bo->forcemodnm) {
+	    n = strlen(bo->modnm);
+	    assert(1==fwrite(bo->modnm,n,1,kotblf));
+	  }
 	  assert(1==fwrite("\0",1,1,kotblf));
-	  n = strlen(bo->kldopts);
-	  assert(1==fwrite(bo->kldopts,n,1,kotblf));
+	  if (bo->kldoptstr) {
+	    n = strlen(bo->kldoptstr);
+	    assert(1==fwrite(bo->kldoptstr,n,1,kotblf));
+	  }
 	  assert(1==fwrite("\0",1,1,kotblf));
 	} else {
 	  fprintf(stderr, "ERROR: failed to process bo:%s %s %s\n",
-		  bo->kofnm, bo->modnm, bo->kldopts);
+		  bo->kofnm, bo->modnm, bo->kldoptstr);
 	}
       }
-      if (GBLS.prockallsyms) {
-	size_t n = strlen(GBLS.libkernpath);
-	assert(1==fwrite(GBLS.libkernpath,n,1,kotblf));
+    }
+  }
+  
+  // we do this last so that ko loads will be reflected in so updates
+    if (GBLS.prockallsyms) {
+      char *kernpath;
+      if (openKallsyms(&ksfp)<0) {
+      fprintf(stderr, "ERROR: failed to open kallsyms\n");
+      EEXIT();
+    }
+    prcKallsyms(ksfp, &kernpath);
+
+    if (kotblf) {
+	size_t n = strlen(kernpath);
+	assert(1==fwrite(kernpath,n,1,kotblf));
 	assert(1==fwrite("\0",1,1,kotblf));
 	n = strlen(KALLSYMSPATH);
 	assert(1==fwrite(KALLSYMSPATH,n,1,kotblf));
 	assert(1==fwrite("\0",1,1,kotblf));
 	assert(1==fwrite("\0",1,1,kotblf));
-      }
-      fclose(kotblf);
     }
-  }
-  
-  // we do this last so that ko loads will be reflected in so updates
-  if (GBLS.prockallsyms) {
-    if (openKallsyms(&ksfp)<0) {
-      fprintf(stderr, "ERROR: failed to open kallsyms\n");
-      EEXIT();
-    }
-    prcKallsyms(GBLS.pathprefix, ksfp);
+    fclose(ksfp);
   }
 
+  if (kotblf) fclose(kotblf);
   // optionally expose objects via synthetic filesystem
   // This support has not been completed.
   if (GBLS.startfs) {

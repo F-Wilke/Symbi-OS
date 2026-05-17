@@ -390,3 +390,4 @@ int extension_init(void)
   return ret;
 }
 
+MODULE_INFO(kld, "SHARED");

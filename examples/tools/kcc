@@ -215,15 +215,15 @@ for dep_mod in "${dep_modules[@]}"; do
 		found=1
 		break
 	    else
-		echo "ERROR: Module.symvers not found for $dep_mod in $search_dir" > /dev/stderr
-		exit -1
+		echo "WARNING: Module.symvers not found for $dep_mod in $search_dir" > /dev/stderr
+#		exit -1
 	    fi
 	fi
     done
     
     if (( ! found )); then
-	echo "ERROR: Could not find $dep_mod in any of the specified search directories" > /dev/stderr
-	exit -1
+	echo "WARNING: Could not find $dep_mod in any of the specified search directories" > /dev/stderr
+#	exit -1
     fi
 done
 
@@ -285,8 +285,12 @@ rtdir=$(realpath --relative-to=$PWD $tmpdir)
 
 [[ -a $rtdir/$target ]] && {
     mv $rtdir/$target $curdir/$target
-    ${kld} -k $target
+    declare -a kld_args
+    for d in "${module_search_dirs[@]}"; do kld_args+=(-K "$d"); done
+    for m in "${dep_modules[@]}";        do kld_args+=(-k "$m"); done
+    ${kld} "${kld_args[@]}" -k "$target"
 }
+
 [[ -a $rtdir/Module.symvers ]] && mv $rtdir/Module.symvers $curdir/Module.symvers
 
 exit 0

@@ -5,6 +5,7 @@
 int current_pid(void) {
 	return current->pid;
 }
+EXPORT_SYMBOL(current_pid);
 
 //exposed kernel function
 int kernel_add(int a, int b) {

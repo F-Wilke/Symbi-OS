@@ -64,3 +64,4 @@ void idt_adaptor_release(const gate_desc *idt) {
   free_pages((unsigned long)idt, 0);
 }
 EXPORT_SYMBOL(idt_adaptor_release);
+MODULE_INFO(kld, "SHARED");
