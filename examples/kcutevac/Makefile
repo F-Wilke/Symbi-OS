@@ -12,6 +12,6 @@ ${TARGET}: $(wildcard *.kc *.kh *.kS)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 clean:
-	rm -rf $(wildcard $(TARGET) *.o *.so *.a *.ko kotbl.bin libk .ext)
+	rm -rf $(wildcard $(TARGET) *.o *.so *.a *.ko kotbl.bin Module.symvers .ext)
 
 

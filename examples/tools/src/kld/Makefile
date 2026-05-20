@@ -25,10 +25,24 @@ ${UTHASHINCS}/uthash.h:
 stubstest: stubtest.c mklibstubs
 	./mklibstubs
 	${CC} -fPIC $< -o $@ -L. -lstubs
-	@echo -e "****** To test our approach to symbols run *******\nLD_LIBRARY_PATH=. ./stubstest"
+	@echo -e "****** To test our approach to symbols run *******\nLD_LIBRARY_PATH=." ./$@
 
 mklibstubs: kldelf.c
 	${CC} -DMAIN $< -o $@ -lelf
+
+libkern.so: kld
+	sudo ./kld -k /proc/kallsyms
+
+kerntest: kerntest.c libkern.so
+	${CC} -fPIC $< -o $@ -L. -lkern
+	@echo -e "****** To test our libkern generation run *******\nLD_LIBRARY_PATH=." ./$@
+
+libkallsyms.so:
+	cp /proc/libkallsyms.so .
+
+kallsymtest: kerntest.c libkallsyms.so
+	${CC} -fPIC $< -o $@ -lc -L. -lkallsyms
+	@echo -e "****** To test against original libkallsyms run *******\nLD_LIBRARY_PATH=." ./$@
 
 listlibs: listlibs.c
 	${CC} -DMAIN $< -o $@ -lelf

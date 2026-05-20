@@ -12,7 +12,6 @@
 #include <signal.h>
 #include <setjmp.h>
 
-#include "pfadaptor.kh"
 
 #define PAGE_SIZE 4096
 
@@ -137,13 +136,6 @@ int mmap_stack_test(unsigned operation)
     *(volatile char *)page_B = 0x42;
     printf("\t%d: Page B touched (wrote 0x42)\n", mypid);
 
-    unsigned long df_cnt=0, pf_cnt=0;
-
-    pf_cnt = pf_adaptor_pf_cnt_get();
-    df_cnt = pf_adaptor_df_cnt_get();
-
-    printf("\t%d: current df counter %lu, pf counter: %lu\n", mypid, df_cnt, pf_cnt);
-    
     // Verify page B is now resident
     if (mincore(page_B, PAGE_SIZE, vec) == 0) {
         printf("\t%d: Page B residency after touch: %s\n", mypid,
@@ -220,11 +212,6 @@ int mmap_stack_test(unsigned operation)
             : "memory"
         );
 
-        pf_cnt = pf_adaptor_pf_cnt_get();
-        df_cnt = pf_adaptor_df_cnt_get();
-
-        printf("\t%d: current df counter %lu, pf counter: %lu\n", mypid, df_cnt, pf_cnt);
-        
     } else {
         printf("\t%d: Caught fault during test\n", mypid);
         printf("\t%d: Fault was at iteration %d\n", mypid, fault_caught);

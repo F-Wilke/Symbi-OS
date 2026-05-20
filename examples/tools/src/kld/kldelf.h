@@ -43,8 +43,8 @@ kld_sym_init_from_kallsyms(kld_sym *this, uintptr_t addr, char *name,
   case 'R': bind = STB_GLOBAL; stype = STT_OBJECT; break;
   case 'T': bind = STB_GLOBAL; stype = STT_FUNC;   break;
   case 'U': assert(0); rc = -1; break;
-  case 'V': bind = STB_WEAK;   stype = STT_NOTYPE; break;
-  case 'W': bind = STB_WEAK;   stype = STT_NOTYPE; break;
+  case 'V': bind = STB_WEAK;   stype = STT_OBJECT; break;
+  case 'W': bind = STB_WEAK;   stype = STT_FUNC;   break;
 #if 0
   case 'a': bind = STB_LOCAL;  stype = STT_NOTYPE; break;
   case 'b': bind = STB_LOCAL;  stype = STT_OBJECT; break;
@@ -129,7 +129,7 @@ typedef struct {
 } kld_secdata;
 
 extern void *kld_generate_elf_mmap(const kld_sym *entries, int count,
-				   size_t strlen,
+				   size_t strlen, const char *soname,
 				   size_t *out_size, int *out_fd);
 extern int   kld_read_elf_syms(const char *path, int fd, kld_sym **entries,
 			   size_t *n, size_t *nmstrlen);

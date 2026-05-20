@@ -15,6 +15,40 @@
 
 typedef struct { char *buf; size_t top; } StrTab;
 
+// GNU hash (djb2 variant) — same algorithm used by GNU ld
+static uint32_t
+gnu_hash_fn(const char *s)
+{
+    uint32_t h = 5381;
+    for (unsigned char c; (c = (unsigned char)*s) != '\0'; s++)
+        h = h * 33 + c;
+    return h;
+}
+
+// Smallest power of 2 >= n, minimum 1
+static uint32_t
+next_pow2_u32(uint32_t n)
+{
+    if (n <= 1) return 1;
+    n--;
+    n |= n >> 1; n |= n >> 2; n |= n >> 4; n |= n >> 8; n |= n >> 16;
+    return n + 1;
+}
+
+typedef struct { uint32_t h; int orig; } SymBucket;
+
+// qsort_r comparator: sort by bucket (h % nbuckets), stable by original index
+static int
+cmp_sym_by_bucket(const void *a, const void *b, void *ctx)
+{
+    uint32_t nb = *(uint32_t *)ctx;
+    const SymBucket *sa = (const SymBucket *)a, *sb = (const SymBucket *)b;
+    uint32_t ba = sa->h % nb, bb = sb->h % nb;
+    if (ba < bb) return -1;
+    if (ba > bb) return  1;
+    return sa->orig - sb->orig;
+}
+
 static size_t
 add_str(StrTab *st, const char *s)
 {
@@ -27,7 +61,7 @@ add_str(StrTab *st, const char *s)
 // Returns a memory-mapped pointer to the ELF data
 extern void*
 kld_generate_elf_mmap(const kld_sym *entries, int count,
-		      size_t nmstrlen,   
+		      size_t nmstrlen, const char *soname,
 		      size_t *out_size, int *out_fd)
 {
   void *map = NULL; 
@@ -45,7 +79,7 @@ kld_generate_elf_mmap(const kld_sym *entries, int count,
 
     // [ ... String table and Section logic remains the same ... ]
     const char *sec_names[] = {
-      ".shstrtab", ".strtab", ".symtab", ".dynstr", ".dynsym", ".hash", ".dynamic"
+      ".shstrtab", ".strtab", ".symtab", ".dynstr", ".dynsym", ".gnu.hash", ".dynamic"
     };
     int numsec = sizeof(sec_names)/sizeof(sec_names[0]);
     size_t schdrlen = 0;
@@ -63,14 +97,32 @@ kld_generate_elf_mmap(const kld_sym *entries, int count,
     size_t n_symtab  = add_str(&sh_st, sec_names[2]);
     size_t n_dynstr  = add_str(&sh_st, sec_names[3]);
     size_t n_dynsym  = add_str(&sh_st, sec_names[4]);
-    size_t n_hash    = add_str(&sh_st, sec_names[5]);
+    size_t n_gnuhash = add_str(&sh_st, sec_names[5]);
     size_t n_dynamic = add_str(&sh_st, sec_names[6]);
 
+    // GNU hash parameters.
+    // nbuckets: ~4 symbols/bucket (matches libkallsyms.so ratio).
+    // bloom_size: power-of-2 count of 64-bit words; count/64 ≈ libkallsyms.so's 2048 for 79K syms.
+    uint32_t nbuckets   = (uint32_t)count / 4 + 1;
+    uint32_t bloom_size = next_pow2_u32((uint32_t)count / 64);
+    if (bloom_size < 1) bloom_size = 1;
+    const uint32_t bloom_shift = 6;  // standard for 64-bit bloom words
+
+    // Sort symbols by bucket so same-bucket entries are contiguous (GNU hash requirement).
+    SymBucket *sort_arr = malloc(count * sizeof(SymBucket));
+    for (int i = 0; i < count; i++) {
+        sort_arr[i].h    = gnu_hash_fn(entries[i].name);
+        sort_arr[i].orig = i;
+    }
+    qsort_r(sort_arr, count, sizeof(SymBucket), cmp_sym_by_bucket, &nbuckets);
+
     nmstrlen++; // add for initial manditory null byte at start of a string table
-    StrTab sym_st = { calloc(1, nmstrlen), 0 };
+    size_t soname_extra = (soname && *soname) ? strlen(soname) + 1 : 0;
+    StrTab sym_st = { calloc(1, nmstrlen + soname_extra), 0 };
     add_str(&sym_st, ""); // set index 0 to '\0'
     size_t *sym_offsets = malloc(sizeof(size_t)*count);
-    for(int i=0; i<count; i++) sym_offsets[i] = add_str(&sym_st, entries[i].name);
+    for(int i=0; i<count; i++) sym_offsets[i] = add_str(&sym_st, entries[sort_arr[i].orig].name);
+    size_t soname_off = (soname && *soname) ? add_str(&sym_st, soname) : 0;
 
     GElf_Shdr sh;
     Elf_Scn *s_shstr = elf_newscn(elf);
@@ -94,7 +146,7 @@ kld_generate_elf_mmap(const kld_sym *entries, int count,
 
     GElf_Sym *sym_table = calloc(count + 1, sizeof(GElf_Sym));
     for(int i=0; i<count; i++) {
-      sym_table[i+1]         = entries[i].sym;
+      sym_table[i+1]         = entries[sort_arr[i].orig].sym;
       sym_table[i+1].st_name = sym_offsets[i];
     }
 
@@ -115,25 +167,55 @@ kld_generate_elf_mmap(const kld_sym *entries, int count,
     sh.sh_entsize = sizeof(GElf_Sym);
     gelf_update_shdr(s_dynsym, &sh);
 
-    Elf_Scn *s_hash = elf_newscn(elf);
-    uint32_t *h_buf = calloc(count+3, 4);
-    h_buf[0]=1; h_buf[1]=count+1; for(int i=0; i<count; i++) h_buf[3+i]=i+1;
-    Elf_Data *d_hash = elf_newdata(s_hash); d_hash->d_buf = h_buf;
-    d_hash->d_size = (count+3)*4; d_hash->d_align = 8;
-    gelf_getshdr(s_hash, &sh); sh.sh_type = SHT_HASH; sh.sh_name = n_hash;
+    // GNU hash table layout (all little-endian on x86-64):
+    //   uint32_t  header[4]     = { nbuckets, symoffset=1, bloom_size, bloom_shift }
+    //   uint64_t  bloom[bloom_size]
+    //   uint32_t  buckets[nbuckets]   (dynsym index of first sym in bucket, or 0)
+    //   uint32_t  chains[count]       (one per hashed sym: hash&~1 | end_of_chain_bit)
+    size_t gnuhash_size = 4*4 + 8*(size_t)bloom_size + 4*(size_t)nbuckets + 4*(size_t)count;
+    uint8_t *gh_buf = calloc(1, gnuhash_size);
+    uint32_t *gh_hdr   = (uint32_t *)gh_buf;
+    uint64_t *gh_bloom = (uint64_t *)(gh_buf + 16);
+    uint32_t *gh_bkts  = (uint32_t *)(gh_buf + 16 + 8*(size_t)bloom_size);
+    uint32_t *gh_chain = (uint32_t *)(gh_buf + 16 + 8*(size_t)bloom_size + 4*(size_t)nbuckets);
+
+    gh_hdr[0] = nbuckets; gh_hdr[1] = 1; gh_hdr[2] = bloom_size; gh_hdr[3] = bloom_shift;
+
+    for (int i = 0; i < count; i++) {
+        uint32_t h      = sort_arr[i].h;
+        uint32_t bucket = h % nbuckets;
+        // Bloom filter: two bits per symbol in a 64-bit word
+        gh_bloom[(h >> 6) & (bloom_size - 1)] |= (1ULL << (h & 63)) |
+                                                  (1ULL << ((h >> bloom_shift) & 63));
+        // Buckets: record dynsym index (1-based) of first symbol in this bucket
+        if (gh_bkts[bucket] == 0) gh_bkts[bucket] = (uint32_t)(i + 1);
+        // Chain: store hash (bit 0 clear) and set bit 0 when this is the last in the bucket
+        int last_in_bucket = (i + 1 == count) || ((sort_arr[i+1].h % nbuckets) != bucket);
+        gh_chain[i] = (h & ~1u) | (last_in_bucket ? 1u : 0u);
+    }
+
+    Elf_Scn *s_gnuhash = elf_newscn(elf);
+    Elf_Data *d_gnuhash = elf_newdata(s_gnuhash);
+    d_gnuhash->d_buf = gh_buf; d_gnuhash->d_size = gnuhash_size;
+    d_gnuhash->d_type = ELF_T_BYTE; d_gnuhash->d_align = 8;
+    gelf_getshdr(s_gnuhash, &sh); sh.sh_type = SHT_GNU_HASH; sh.sh_name = n_gnuhash;
     sh.sh_flags = SHF_ALLOC; sh.sh_link = elf_ndxscn(s_dynsym);
-    gelf_update_shdr(s_hash, &sh);
+    gelf_update_shdr(s_gnuhash, &sh);
 
     Elf_Scn *s_dyn = elf_newscn(elf);
-    GElf_Dyn *dyn_data = calloc(7, sizeof(GElf_Dyn));
+    int ndyn = soname_off ? 8 : 7;   // +1 slot for DT_SONAME when soname is set
+    GElf_Dyn *dyn_data = calloc(ndyn, sizeof(GElf_Dyn));
     Elf_Data *d_dyn = elf_newdata(s_dyn); d_dyn->d_buf = dyn_data;
-    d_dyn->d_size = 7*sizeof(GElf_Dyn); d_dyn->d_align = 8;
+    d_dyn->d_size = ndyn*sizeof(GElf_Dyn); d_dyn->d_align = 8;
     gelf_getshdr(s_dyn, &sh); sh.sh_type = SHT_DYNAMIC; sh.sh_name = n_dynamic;
-    sh.sh_flags = SHF_ALLOC;
+    sh.sh_flags = SHF_ALLOC; sh.sh_link = elf_ndxscn(s_dynstr);
     gelf_update_shdr(s_dyn, &sh);
 
-    gelf_newphdr(elf, 2);
-    elf_update(elf, ELF_C_NULL);
+    gelf_newphdr(elf, 3);
+    // ELF_C_NULL computes the final layout without writing; the return value
+    // is the total file size.  We need it to set PT_LOAD p_filesz so that
+    // ld.so maps the entire file, not just a hardcoded 4096 bytes.
+    off_t total_size = elf_update(elf, ELF_C_NULL);
 
     GElf_Ehdr ehdr; gelf_getehdr(elf, &ehdr);
     ehdr.e_type = ET_DYN; ehdr.e_machine = EM_X86_64;
@@ -147,15 +229,20 @@ kld_generate_elf_mmap(const kld_sym *entries, int count,
     dyn_data[1].d_un.d_ptr = t_sh.sh_offset;
     dyn_data[2].d_tag = DT_STRSZ;  dyn_data[2].d_un.d_val = sym_st.top;
     dyn_data[3].d_tag = DT_SYMENT; dyn_data[3].d_un.d_val = sizeof(GElf_Sym);
-    gelf_getshdr(s_hash, &t_sh);   dyn_data[4].d_tag = DT_HASH;
+    gelf_getshdr(s_gnuhash, &t_sh); dyn_data[4].d_tag = DT_GNU_HASH;
     dyn_data[4].d_un.d_ptr = t_sh.sh_offset;
-    dyn_data[5].d_tag = DT_NULL;
+    if (soname_off) {
+        dyn_data[5].d_tag = DT_SONAME; dyn_data[5].d_un.d_val = soname_off;
+        dyn_data[6].d_tag = DT_NULL;
+    } else {
+        dyn_data[5].d_tag = DT_NULL;
+    }
 
     GElf_Phdr phdr;
     gelf_getphdr(elf, 0, &phdr);
-    phdr.p_type = PT_LOAD; phdr.p_vaddr = 0;
-    phdr.p_filesz = phdr.p_memsz = 0x1000;
-    phdr.p_flags = PF_R; phdr.p_align = 0x1000;
+    phdr.p_type   = PT_LOAD; phdr.p_vaddr = 0; phdr.p_offset = 0;
+    phdr.p_filesz = phdr.p_memsz = (GElf_Xword)total_size;
+    phdr.p_flags  = PF_R; phdr.p_align = 0x1000;
     gelf_update_phdr(elf, 0, &phdr);
 
     gelf_getphdr(elf, 1, &phdr);
@@ -163,6 +250,13 @@ kld_generate_elf_mmap(const kld_sym *entries, int count,
     phdr.p_type = PT_DYNAMIC; phdr.p_offset = phdr.p_vaddr = t_sh.sh_offset;
     phdr.p_filesz = phdr.p_memsz = d_dyn->d_size; phdr.p_flags = PF_R;
     gelf_update_phdr(elf, 1, &phdr);
+
+    // PT_GNU_STACK declares the stack non-executable; without it ld.so would
+    // attempt to mark the stack executable, which the kernel refuses.
+    gelf_getphdr(elf, 2, &phdr);
+    phdr.p_type = PT_GNU_STACK; phdr.p_offset = phdr.p_vaddr = phdr.p_paddr = 0;
+    phdr.p_filesz = phdr.p_memsz = 0; phdr.p_flags = PF_R|PF_W; phdr.p_align = 0x10;
+    gelf_update_phdr(elf, 2, &phdr);
 
     gelf_getshdr(s_dynsym, &t_sh); t_sh.sh_info = 1;
     gelf_update_shdr(s_dynsym, &t_sh);
@@ -185,7 +279,7 @@ kld_generate_elf_mmap(const kld_sym *entries, int count,
     // Local Cleanup
     free(sym_offsets);
     free(sh_st.buf); free(sym_st.buf); free(sym_table);
-    free(h_buf); free(dyn_data);
+    free(sort_arr); free(gh_buf); free(dyn_data);
 
     return map;
 }
@@ -387,9 +481,9 @@ int main() {
   e = &entries[i]; i++;
   assert(kld_sym_init_from_kallsyms(e, 0x7FFF00005000, "global_bss", 'B')>=0); 
   
-  // 6. Weak Data Symbol (Appears as 'V' or 'W' in nm)
+  // 6. Weak Data Symbol (Appears as 'V' in nm)
   e = &entries[i]; i++;
-  assert(kld_sym_init_from_kallsyms(e, 0x7FFF00006000, "weak_data", 'W')>=0); 
+  assert(kld_sym_init_from_kallsyms(e, 0x7FFF00006000, "weak_data", 'V')>=0); 
     
   // 7. A Pure Absolute Constant (No type, just a value)
   e = &entries[i]; i++;
@@ -405,7 +499,7 @@ int main() {
   for (int i = 0; i<n; i++) {
     nmstrlen += strlen(entries[i].name) + 1; // +1 for null byte
   }
-  elf_ptr = kld_generate_elf_mmap(entries, n, nmstrlen, &elf_size, &mfd);
+  elf_ptr = kld_generate_elf_mmap(entries, n, nmstrlen, "libstubs.so", &elf_size, &mfd);
   
   if (elf_ptr != MAP_FAILED) {
     printf("ELF mapped at %p (Size: %zu)\n", elf_ptr, elf_size);

@@ -540,7 +540,9 @@ writeso(const char *path, int fd, const kld_sym *entries, size_t n,
   int mfd;
   int dfd=fd;
   size_t elf_size;
-  void *elf_ptr = kld_generate_elf_mmap(entries, n, nmstrlen, &elf_size, &mfd);
+  const char *soname = strrchr(path, '/');
+  soname = soname ? soname + 1 : path;
+  void *elf_ptr = kld_generate_elf_mmap(entries, n, nmstrlen, soname, &elf_size, &mfd);
   
   if (elf_ptr != MAP_FAILED) {
     VPRINT("%s: ELF mapped at %p (Size: %zu)\n", path, elf_ptr, elf_size);
