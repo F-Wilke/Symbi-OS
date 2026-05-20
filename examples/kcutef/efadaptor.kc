@@ -13,11 +13,11 @@
 #include <asm/text-patching.h>
 #include <linux/stop_machine.h>
 #include <asm/irq_vectors.h>
+#include <asm/desc.h>
 #include <asm/idtentry.h>
 
 #include "idtadaptor.h"
 #include "efadaptor.kh"
-#include "pfadaptor.kh"
 
 #define VERBOSE 
 
@@ -100,6 +100,47 @@ asm(
 );
 
 extern void ef_adaptor_tsthdlr_asm(void);
+
+
+unsigned long df_handler_location = 0; // set to non-zero to redirect df handler to our handler for testing
+
+// FIXME: JA to use idt adaptor interfaces
+struct dtr
+{
+  uint16_t limit; // limit 2
+  uint64_t base;   // base 8
+}__attribute__((packed));
+
+struct idt_entry {
+	uint16_t offset0;
+	uint16_t selector;
+	uint16_t ist : 3;
+	uint16_t : 5;
+	uint16_t type : 4;
+	uint16_t : 1;
+	uint16_t dpl : 2;
+	uint16_t p : 1;
+	uint16_t offset1;
+	uint32_t offset2; uint32_t reserved;
+};
+
+void set_local_df_handler_location(void) {
+  struct dtr idtr;
+  struct idt_entry *idt;
+    
+  asm volatile ("sidt %0" : "=m" (idtr));
+
+  idt = (struct idt_entry *)idtr.base;
+  
+  unsigned int df_index = X86_TRAP_DF;
+  unsigned long offset = ((uint64_t)idt[df_index].offset2 << 32) |
+                          ((uint64_t)idt[df_index].offset1 << 16) |
+                          (uint64_t)idt[df_index].offset0;
+
+  printk("Current DF handler offset: 0x%016lx\n", offset);
+
+  df_handler_location = offset;
+}
 
 
 // to stop faults on the memory we use on the
@@ -336,23 +377,6 @@ long ef_adaptor_init(int *vecs, int vecs_nr, int vstart, int vend, int tsthdlr)
   // return;
 }
 
-extern unsigned long pf_adaptor_asm_fix_ist_err_code_stack_swing;
-extern unsigned long new_rsp;
-void cause_df(void)
-{
-  new_rsp = this_cpu_read(cpu_tss_rw.x86_tss.sp0);
-
-  new_rsp -= 0x2000;
-
-
-  asm volatile(
-      "jmp pf_adaptor_asm_fix_ist_err_code_stack_swing\t\n"
-  );
-}
-
-
-
-
 int extension_init(void)
 {
 #ifndef ALL_VECTORS
@@ -380,9 +404,6 @@ int extension_init(void)
   ret = ef_adaptor_init(vecs, vecs_nr, vstart, vend, tsthdlr);
   
   pr_info("%s: Initialization complete with ret=%d\n", __func__, ret);
-
-
-  // cause_df();
 
 
   if (ret > 0) 

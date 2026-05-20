@@ -3,5 +3,6 @@
 
 long ef_adaptor_init(int *vecs, int vecs_nr, int vstart, int vend, int tsthdlr);
 void ef_adaptor_print_tsthdlr_data(void);
+void set_local_df_handler_location(void);
 
 #endif //  __EF_ADAPTOR_H__

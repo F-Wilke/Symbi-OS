@@ -2,10 +2,8 @@
 #include <asm/percpu.h>
 #include <asm/asm.h>
 #include <asm/nospec-branch.h>
+#include <asm/ibt.h>
 
-#define DEBUG_CNT
-
-// #include <asm/processor.h>
 	// HW ERROR CODE is last item pushed on to stack by exception logic
 	// bits are defined as follows for pagefault exception-- from intel manual
 	.equ ERRCODE_PF_PROT,  1<<0
@@ -20,140 +18,13 @@
 	
 	.equ RFLAGS_SWAPPED_GS, 1<<29
 	.equ RFLAGS_SWAPPED_GS_MASK, ~(1<<29)
-	
-	.text
-	.align 16
-	.global pf_adaptor_asm_fix_err_code_u
-pf_adaptor_asm_fix_err_code_u:
-	// NYI: Add tests to only fix error code if faulting process is elevated and
-	//      address and fault type are sensible.  
-	// x86 allows immediate and memory operands without using a register
-#ifdef DEBUG_CNT	
-	incq  pf_adaptor_pf_cnt
-	//check current->symbiote_elevated and only set user bit if elevated
-#endif	
-	testq %rsp, %rsp
-	js .Lskip_stack_touch
-	sti //if we page fault again, we must not have interrupts disabled, otherwise do_user_addr_fault will issue a warning.
-	movb $1, -0x1000(%rsp) //touch stack so that 
-	cli
-
-.Lskip_stack_touch:
-	pushq %rax
-	rdgsbase %rax
-	test %rax, %rax
-	jns  .Lskip_user_bit //gsbase is positve or zero (no sign flag) => user mode => definitely not elevated. 
-
-	movq %gs:current_task(%rip), %rax
-	// movq $0x1, %rax
-	testb $1, TASK_symbiote_elevated(%rax)
-	// testb $1, %al
-	jz  .Lskip_user_bit
-
-	orl   $ERRCODE_PF_USER, 8(%rsp)
-
-
-
-.Lskip_user_bit:
-	popq %rax
-
-	jmp   *pf_adaptor_asm_exc_page_fault
-	// int3 to satifiy objtool desire for a trap after a speculative jump to try and improve security
-	int3
-
 
 
 
 	.text
 	.align 16
-	.global pf_adaptor_asm_fix_err_code_uw
-pf_adaptor_asm_fix_err_code_uw:
-	// This will be executed on the kernel IST stack
-	// fix double fault 
-	// x86 allows immediate and memory operands without using a register
-#ifdef DEBUG_CNT		
-	incq  pf_adaptor_df_cnt
-#endif
-	pushq %rax
-	//which assumptions can I make about gs base after a double fault? 
-	//paranoid entry reads from $0xc0000101 to get a value for gsbase. So I can clearly not 
-/*
-	It swaps gs if the value read from 0xc0000101 not a kernel address. It does nothing if the value is a kernel address. 
-	So I can also just check that.
-   0xffffffff81001c46 <+134>:   mov    $0x1,%ebx
-   0xffffffff81001c4b <+139>:   mov    $0xc0000101,%ecx
-   0xffffffff81001c50 <+144>:   rdmsr
-   0xffffffff81001c52 <+146>:   test   %edx,%edx
-   0xffffffff81001c54 <+148>:   js     0xffffffff81001c5b <paranoid_entry+155>
-   0xffffffff81001c56 <+150>:   xor    %ebx,%ebx
-   0xffffffff81001c58 <+152>:   swapgs
-*/
-	//the same check as in paranoid_entry
-	rdgsbase %rax
-	test %rax, %rax
-	jns  .Lskip_df_set //if gsbase is not a kernel address, we're not elevated
-
-	//if gsbase is garbage but looks like a kernel address exc_double_fault would also blow up, 
-	// so we might as well blow up here
-	movq %gs:current_task(%rip), %rax 
-
-	testb $1, TASK_symbiote_elevated(%rax)
-
-	jz  .Lskip_df_set
-
-	orl   $(ERRCODE_PF_USER|ERRCODE_PF_WRITE), 8(%rsp)
-	popq %rax
-	jmp   *pf_adaptor_asm_exc_page_fault 
-
-
-.Lskip_df_set:
-	popq %rax
-
-	jmp   *pf_adaptor_asm_exc_double_fault	
-	// int3 to satifiy objtool desire for a trap after a speculative jump to try and improve security
-	int3
-	
-
-
-	.text
-	.align 16
-	.global pf_adaptor_asm_fix_err_code_gp
-pf_adaptor_asm_fix_err_code_gp:
-	// This will be executed on the kernel IST stack
-	// fix double fault 
-	// x86 allows immediate and memory operands without using a register
-#ifdef DEBUG_CNT			
-	incq  pf_adaptor_gp_cnt
-#endif	
-	testq %rsp, %rsp
-	js .Lgp_skip_stack_touch
-	sti //if we page fault again, we must not have interrupts disabled, otherwise do_user_addr_fault will issue a warning.
-	movb $1, -0x1000(%rsp) //touch stack so that 
-	cli
-	
-.Lgp_skip_stack_touch:
-
-	jmp   *pf_adaptor_asm_exc_general_protection	
-	// int3 to satifiy objtool desire for a trap after a speculative jump to try and improve security
-	int3
-
-
-
-
-	.text
-	.align 16
-	.global pf_adaptor_asm_fix_ist_err_code_stack_swing
-pf_adaptor_asm_fix_ist_err_code_stack_swing:
-	ENDBR
-	movq new_rsp(%rip), %rsp
-	pushq %rdi
-
-
-
-	.text
-	.align 16
-	.global pf_adaptor_asm_fix_ist_err_code
-pf_adaptor_asm_fix_ist_err_code:
+	.global ef_adaptor_asm_fix_ist_err_code
+ef_adaptor_asm_fix_ist_err_code:
 	// This will be executed on an IST stack
 	// we copy the exception frame from the IST stack to the regular kernel stack
 	// if we faulted on a user stack we use tss.rsp0
@@ -260,16 +131,6 @@ pf_adaptor_asm_fix_ist_err_code:
 	int3
 
 
-
-
-
-	.text
-	.align 16
-	.global pf_adaptor_asm_fix_ist_no_err_code_stack_swing
-pf_adaptor_asm_fix_ist_no_err_code_stack_swing:
-	ENDBR
-	movq new_rsp(%rip), %rsp
-
 	.text
 	.align 16
 	.global pf_adaptor_asm_fix_ist_no_err_code
@@ -333,3 +194,335 @@ pf_adaptor_asm_fix_ist_no_err_code:
 .Lno_err_c_len_bad:
 	jmp .Lno_err_c_len_normal
 	int3
+
+
+// #define DEBUG_OHSHIT
+/*
+	.glob ef_isr_x
+	.glob ef_isr_tgt_x
+	.align 8
+ef_isr_x:	
+	subq $8, %rsp
+	push %rdi
+	movq ef_isr_tgt_x(%rip), %rdi
+	movq %rdi, 8(%rsp)
+	pop  %rdi
+	jmp  common_ef_hdlr
+	.align 8
+ef_isr_tgt_x:
+	.quad 0
+	*/
+
+#ifdef DEBUG_OHSHIT
+	.text
+	.align 16
+	.global ef_common_hdlr
+ef_common_hdlr:
+	retq
+	int3
+	
+	// switched to using a table to avoid code patching
+	// NOTE: not executing cld!!!! be careful
+	//       assume real entry points will take are of the real work
+	//       so we must be careful
+#define ef_isr(i)	 			\
+	.global ef_adaptor_isr_##i	;	\
+	.align 32			;	\
+ef_adaptor_isr_##i:			;	\
+        ENDBR                           ;       \
+	subq $8, %rsp			;	\
+	push %rdi			;	\
+	movq ef_adaptor_orig_isrs + (##i * 8)(%rip), %rdi ;	\
+       testq %rdi, %rdi                ;      \
+ohshit_##i:  jz    ohshit_##i           ;      \
+	movq %rdi, 8(%rsp)		;	\
+	pop  %rdi			;	\
+	jmp ef_adaptor_asm_fix_ist_err_code
+#else
+	.text
+	.align 16
+	.global ef_common_hdlr
+ef_common_hdlr:
+	retq
+	int3
+	
+	// switched to using a table to avoid code patching
+	// NOTE: not executing cld!!!! be careful
+	//       assume real entry points will take are of the real work
+	//       so we must be careful
+#define ef_isr(i)	 			\
+	.global ef_adaptor_isr_##i	;	\
+	.align 32			;	\
+ef_adaptor_isr_##i:			;	\
+        ENDBR                           ;       \
+	subq $8, %rsp			;	\
+	push %rdi			;	\
+	movq ef_adaptor_orig_isrs + (##i * 8)(%rip), %rdi ;	\
+	movq %rdi, 8(%rsp)		;	\
+	pop  %rdi			;	\
+	jmp ef_adaptor_asm_fix_ist_err_code
+#endif
+	.text
+	.global ef_adaptor_isrs
+	.align 32
+ef_adaptor_isrs:
+	ef_isr(0)
+	ef_isr(1)
+	ef_isr(2)
+	ef_isr(3)
+	ef_isr(4)
+	ef_isr(5)
+	ef_isr(6)
+	ef_isr(7)
+	ef_isr(8)
+	ef_isr(9)
+	ef_isr(10)
+	ef_isr(11)
+	ef_isr(12)
+	ef_isr(13)
+	ef_isr(14)
+	ef_isr(15)
+	ef_isr(16)
+	ef_isr(17)
+	ef_isr(18)
+	ef_isr(19)
+	ef_isr(20)
+	ef_isr(21)
+	ef_isr(22)
+	ef_isr(23)
+	ef_isr(24)
+	ef_isr(25)
+	ef_isr(26)
+	ef_isr(27)
+	ef_isr(28)
+	ef_isr(29)
+	ef_isr(30)
+	ef_isr(31)
+	ef_isr(32)
+	ef_isr(33)
+	ef_isr(34)
+	ef_isr(35)
+	ef_isr(36)
+	ef_isr(37)
+	ef_isr(38)
+	ef_isr(39)
+	ef_isr(40)
+	ef_isr(41)
+	ef_isr(42)
+	ef_isr(43)
+	ef_isr(44)
+	ef_isr(45)
+	ef_isr(46)
+	ef_isr(47)
+	ef_isr(48)
+	ef_isr(49)
+	ef_isr(50)
+	ef_isr(51)
+	ef_isr(52)
+	ef_isr(53)
+	ef_isr(54)
+	ef_isr(55)
+	ef_isr(56)
+	ef_isr(57)
+	ef_isr(58)
+	ef_isr(59)
+	ef_isr(60)
+	ef_isr(61)
+	ef_isr(62)
+	ef_isr(63)
+	ef_isr(64)
+	ef_isr(65)
+	ef_isr(66)
+	ef_isr(67)
+	ef_isr(68)
+	ef_isr(69)
+	ef_isr(70)
+	ef_isr(71)
+	ef_isr(72)
+	ef_isr(73)
+	ef_isr(74)
+	ef_isr(75)
+	ef_isr(76)
+	ef_isr(77)
+	ef_isr(78)
+	ef_isr(79)
+	ef_isr(80)
+	ef_isr(81)
+	ef_isr(82)
+	ef_isr(83)
+	ef_isr(84)
+	ef_isr(85)
+	ef_isr(86)
+	ef_isr(87)
+	ef_isr(88)
+	ef_isr(89)
+	ef_isr(90)
+	ef_isr(91)
+	ef_isr(92)
+	ef_isr(93)
+	ef_isr(94)
+	ef_isr(95)
+	ef_isr(96)
+	ef_isr(97)
+	ef_isr(98)
+	ef_isr(99)
+	ef_isr(100)
+	ef_isr(101)
+	ef_isr(102)
+	ef_isr(103)
+	ef_isr(104)
+	ef_isr(105)
+	ef_isr(106)
+	ef_isr(107)
+	ef_isr(108)
+	ef_isr(109)
+	ef_isr(110)
+	ef_isr(111)
+	ef_isr(112)
+	ef_isr(113)
+	ef_isr(114)
+	ef_isr(115)
+	ef_isr(116)
+	ef_isr(117)
+	ef_isr(118)
+	ef_isr(119)
+	ef_isr(120)
+	ef_isr(121)
+	ef_isr(122)
+	ef_isr(123)
+	ef_isr(124)
+	ef_isr(125)
+	ef_isr(126)
+	ef_isr(127)
+	ef_isr(128)
+	ef_isr(129)
+	ef_isr(130)
+	ef_isr(131)
+	ef_isr(132)
+	ef_isr(133)
+	ef_isr(134)
+	ef_isr(135)
+	ef_isr(136)
+	ef_isr(137)
+	ef_isr(138)
+	ef_isr(139)
+	ef_isr(140)
+	ef_isr(141)
+	ef_isr(142)
+	ef_isr(143)
+	ef_isr(144)
+	ef_isr(145)
+	ef_isr(146)
+	ef_isr(147)
+	ef_isr(148)
+	ef_isr(149)
+	ef_isr(150)
+	ef_isr(151)
+	ef_isr(152)
+	ef_isr(153)
+	ef_isr(154)
+	ef_isr(155)
+	ef_isr(156)
+	ef_isr(157)
+	ef_isr(158)
+	ef_isr(159)
+	ef_isr(160)
+	ef_isr(161)
+	ef_isr(162)
+	ef_isr(163)
+	ef_isr(164)
+	ef_isr(165)
+	ef_isr(166)
+	ef_isr(167)
+	ef_isr(168)
+	ef_isr(169)
+	ef_isr(170)
+	ef_isr(171)
+	ef_isr(172)
+	ef_isr(173)
+	ef_isr(174)
+	ef_isr(175)
+	ef_isr(176)
+	ef_isr(177)
+	ef_isr(178)
+	ef_isr(179)
+	ef_isr(180)
+	ef_isr(181)
+	ef_isr(182)
+	ef_isr(183)
+	ef_isr(184)
+	ef_isr(185)
+	ef_isr(186)
+	ef_isr(187)
+	ef_isr(188)
+	ef_isr(189)
+	ef_isr(190)
+	ef_isr(191)
+	ef_isr(192)
+	ef_isr(193)
+	ef_isr(194)
+	ef_isr(195)
+	ef_isr(196)
+	ef_isr(197)
+	ef_isr(198)
+	ef_isr(199)
+	ef_isr(200)
+	ef_isr(201)
+	ef_isr(202)
+	ef_isr(203)
+	ef_isr(204)
+	ef_isr(205)
+	ef_isr(206)
+	ef_isr(207)
+	ef_isr(208)
+	ef_isr(209)
+	ef_isr(210)
+	ef_isr(211)
+	ef_isr(212)
+	ef_isr(213)
+	ef_isr(214)
+	ef_isr(215)
+	ef_isr(216)
+	ef_isr(217)
+	ef_isr(218)
+	ef_isr(219)
+	ef_isr(220)
+	ef_isr(221)
+	ef_isr(222)
+	ef_isr(223)
+	ef_isr(224)
+	ef_isr(225)
+	ef_isr(226)
+	ef_isr(227)
+	ef_isr(228)
+	ef_isr(229)
+	ef_isr(230)
+	ef_isr(231)
+	ef_isr(232)
+	ef_isr(233)
+	ef_isr(234)
+	ef_isr(235)
+	ef_isr(236)
+	ef_isr(237)
+	ef_isr(238)
+	ef_isr(239)
+	ef_isr(240)
+	ef_isr(241)
+	ef_isr(242)
+	ef_isr(243)
+	ef_isr(244)
+	ef_isr(245)
+	ef_isr(246)
+	ef_isr(247)
+	ef_isr(248)
+	ef_isr(249)
+	ef_isr(250)
+	ef_isr(251)
+	ef_isr(252)
+	ef_isr(253)
+	ef_isr(254)
+	ef_isr(255)
+
+	.global ef_adaptor_isr_len
+	.equ ef_adaptor_isr_len, ef_adaptor_isr_1 - ef_adaptor_isr_0
+
