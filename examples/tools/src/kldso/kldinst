@@ -16,13 +16,15 @@ binary=$1
     exit 0
 }
 
-echo -n "current interpters for $binary: "
 
-if patchelf --print-interpreter $binary; then
-    patchelf --set-interpreter $interp $binary
-    echo -n "now: "
-    patchelf --print-interpreter $binary
-fi
+[[ -z $KLD_NOINTERP ]] && {
+  echo -n "current interpters for $binary: "
+  if patchelf --print-interpreter $binary; then
+      patchelf --set-interpreter $interp $binary
+      echo -n "now: "
+      patchelf --print-interpreter $binary
+  fi
+}
 
 [[ -a $KOTBL ]] && {
     # following was generated with github copilot (Claude Haiku 4.5)
@@ -34,6 +36,9 @@ fi
     objcopy --add-section .kotbl="$KOTBL" \
         --set-section-flags .kotbl=readonly,noload,contents \
         "$binary"
+    [[ -n $KLD_VERBOSE ]] && {
+        echo "$KOTBL installed into $binary"
+    }
 }
 
     

@@ -2,7 +2,7 @@ SRCS       := main.c kldfs.c fs.c sigproc.c kldelf.c modinfo.c loadbo.c
 OBJS       := $(SRCS:%.c=%.o)
 O          := 0
 CFLAGS     += -g -O${O} -std=gnu99 -MD -MP -Wall -Werror $(shell pkg-config fuse3 --cflags) 
-TARGETS    := kld readsymtbl listlibs stubstest
+TARGETS    := kld readsymtbl listlibs stubstest kerntest
 UTHASHREPO := git@github.com:troydhanson/uthash.git
 UTHASHDIR  := ext/uthash
 UTHASHINCS  = ${UTHASHDIR}/include

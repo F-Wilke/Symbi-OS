@@ -27,6 +27,6 @@ ${TARGET}:  main.o mmap_stack_test.o
 -include *.d
 
 clean:
-	rm -rf $(wildcard $(TARGET) $(KTARGET) *.o *.so *.d Module.symvers .ext)
+	rm -rf $(wildcard $(TARGET) $(KTARGET) *.o *.so *.d kotbl.bin Module.symvers .ext)
 
 
