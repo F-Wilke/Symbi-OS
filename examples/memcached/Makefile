@@ -42,7 +42,7 @@ clean:
 	make -C memcached clean
 	-${RM} -rf $(wildcard $(TARGETS))
 
-distclean: clean
+distclean: 
 	-${RM} -rf $(wildcard memcached)
 
 memcached-vanilla/Makefile:
