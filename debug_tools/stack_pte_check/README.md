@@ -143,15 +143,43 @@ When a matching PTE is found:
 [stack_pte_probe] BAD STACK PTE: comm=myapp pid=1234 addr=0x7ffd12345678 pte=0x800000012dead867 (masked=0xdead pattern=0xdead)
 ```
 
+## Graceful Failure Handling
+
+The module is designed to work even if some probe symbols don't exist:
+
+- **Partial Success**: If some symbols (like `symbi_elevate`/`symbi_lower`) don't exist, those probes will be skipped with a warning, but the module will still load with the available probes
+- **Complete Failure**: The module will only fail to load if **none** of the symbols exist
+- **Load Messages**: Check `dmesg` after loading to see which probes were successfully registered:
+
+```bash
+sudo insmod stack_pte_probe.ko
+dmesg | grep stack_pte_probe
+# Look for: "Successfully registered N/M kprobes"
+```
+
+Example output on non-Symbi-OS kernel:
+```
+[stack_pte_probe] Registered kprobe at __x64_sys_getpid: ffffffffa1234567
+[stack_pte_probe] Registered kprobe at __x64_sys_read: ffffffffa1234890
+[stack_pte_probe] Registered kprobe at __x64_sys_write: ffffffffa1234abc
+[stack_pte_probe] Failed to register kprobe for symbi_elevate: -2 (symbol may not exist)
+[stack_pte_probe] Failed to register kprobe for symbi_lower: -2 (symbol may not exist)
+[stack_pte_probe] Successfully registered 3/5 kprobes
+```
+
 ## Troubleshooting
 
-### Module fails to load
+### Module fails to load completely
+
+This means **none** of the symbols were found. Check if they exist:
 
 ```bash
 # Check if symbols exist in kallsyms
 sudo grep '__x64_sys_getpid' /proc/kallsyms
 sudo grep '__x64_sys_read' /proc/kallsyms
 sudo grep '__x64_sys_write' /proc/kallsyms
+sudo grep 'symbi_elevate' /proc/kallsyms
+sudo grep 'symbi_lower' /proc/kallsyms
 ```
 
 If symbols are missing, your kernel may use different naming conventions. Check `kernel.org/doc/html/latest/trace/kprobes.html` for your kernel version.

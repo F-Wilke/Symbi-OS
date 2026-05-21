@@ -211,6 +211,7 @@ static struct kprobe kprobes[] = {
 };
 
 static int num_probes = ARRAY_SIZE(kprobes);
+static int registered_probes = 0;  /* Track successfully registered probes */
 
 /*
  * Module initialization
@@ -223,21 +224,29 @@ static int __init stack_pte_probe_init(void)
 	pr_info("[stack_pte_probe] PTE mask=0x%lx pattern=0x%lx rate_limit=%d\n",
 		pte_mask, pte_pattern, rate_limit);
 
-	/* Register all kprobes */
+	/* Register all kprobes - continue even if some fail */
 	for (i = 0; i < num_probes; i++) {
 		ret = register_kprobe(&kprobes[i]);
 		if (ret < 0) {
-			pr_err("[stack_pte_probe] Failed to register kprobe for %s: %d\n",
-			       kprobes[i].symbol_name, ret);
-			/* Unregister previously registered probes */
-			while (--i >= 0)
-				unregister_kprobe(&kprobes[i]);
-			return ret;
+			pr_warn("[stack_pte_probe] Failed to register kprobe for %s: %d (symbol may not exist)\n",
+			        kprobes[i].symbol_name, ret);
+			/* Mark this probe as not registered */
+			kprobes[i].addr = NULL;
+		} else {
+			pr_info("[stack_pte_probe] Registered kprobe at %s: %px\n",
+				kprobes[i].symbol_name, kprobes[i].addr);
+			registered_probes++;
 		}
-		pr_info("[stack_pte_probe] Registered kprobe at %s: %px\n",
-			kprobes[i].symbol_name, kprobes[i].addr);
 	}
 
+	/* Fail only if no probes were registered at all */
+	if (registered_probes == 0) {
+		pr_err("[stack_pte_probe] Failed to register any kprobes - module cannot function\n");
+		return -ENOENT;
+	}
+
+	pr_info("[stack_pte_probe] Successfully registered %d/%d kprobes\n",
+		registered_probes, num_probes);
 	return 0;
 }
 
@@ -248,16 +257,19 @@ static void __exit stack_pte_probe_exit(void)
 {
 	int i;
 
-	/* Unregister all kprobes */
+	/* Unregister only the kprobes that were successfully registered */
 	for (i = 0; i < num_probes; i++) {
-		unregister_kprobe(&kprobes[i]);
-		pr_info("[stack_pte_probe] Unregistered kprobe for %s\n",
-			kprobes[i].symbol_name);
+		if (kprobes[i].addr != NULL) {
+			unregister_kprobe(&kprobes[i]);
+			pr_info("[stack_pte_probe] Unregistered kprobe for %s\n",
+				kprobes[i].symbol_name);
+		}
 	}
 
 	pr_info("[stack_pte_probe] Statistics: checks=%d matches=%d\n",
 		atomic_read(&check_count), atomic_read(&match_count));
-	pr_info("[stack_pte_probe] Module unloaded\n");
+	pr_info("[stack_pte_probe] Module unloaded (had %d/%d probes active)\n",
+		registered_probes, num_probes);
 }
 
 module_init(stack_pte_probe_init);
