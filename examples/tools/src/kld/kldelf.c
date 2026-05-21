@@ -203,7 +203,7 @@ kld_generate_elf_mmap(const kld_sym *entries, int count,
     gelf_update_shdr(s_gnuhash, &sh);
 
     Elf_Scn *s_dyn = elf_newscn(elf);
-    int ndyn = soname_off ? 8 : 7;   // +1 slot for DT_SONAME when soname is set
+    int ndyn = (soname_off ? 8 : 7) + 1; // +1 zero-pad sentinel after DT_NULL
     GElf_Dyn *dyn_data = calloc(ndyn, sizeof(GElf_Dyn));
     Elf_Data *d_dyn = elf_newdata(s_dyn); d_dyn->d_buf = dyn_data;
     d_dyn->d_size = ndyn*sizeof(GElf_Dyn); d_dyn->d_align = 8;
@@ -233,9 +233,11 @@ kld_generate_elf_mmap(const kld_sym *entries, int count,
     dyn_data[4].d_un.d_ptr = t_sh.sh_offset;
     if (soname_off) {
         dyn_data[5].d_tag = DT_SONAME; dyn_data[5].d_un.d_val = soname_off;
-        dyn_data[6].d_tag = DT_NULL;
+        dyn_data[6].d_tag = DT_FLAGS;  dyn_data[6].d_un.d_val = 0;
+        dyn_data[7].d_tag = DT_NULL;
     } else {
-        dyn_data[5].d_tag = DT_NULL;
+        dyn_data[5].d_tag = DT_FLAGS;  dyn_data[5].d_un.d_val = 0;
+        dyn_data[6].d_tag = DT_NULL;
     }
 
     GElf_Phdr phdr;
