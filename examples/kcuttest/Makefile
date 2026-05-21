@@ -7,7 +7,7 @@ KFLAGS  = -K ../kcutidt -K ../kcutef -K ../kcutevac -k kcutidt.ko -k kcutef.ko -
 TARGET  := kcuttest
 KTARGET := kcuttest.ko 
 LIBS := -lc  ../../Symlib/build/L1/L1.a -L. -L ../kcutevac -l kcutevac -lkcuttest -lkern
-LDFLAGS := ${LIBS}
+LDFLAGS := -pie ${LIBS}
 
 .PHONY: all clean
 
@@ -22,7 +22,7 @@ ${KTARGET}: $(wildcard *.kc *.kh *.kS)
 
 ${TARGET}:  main.o mmap_stack_test.o 
 	$(CC) $(CFLAGS) -o $@ $^ ${LDFLAGS}
-#	../tools/src/kldso/kldinst kcuttest
+	KLD_NOINTERP=1 ../tools/src/kldso/kldinst kcuttest
 
 -include *.d
 
