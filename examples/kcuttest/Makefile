@@ -5,7 +5,7 @@ CFLAGS += -I ../../Symlib/include -DDYNLINK
 
 TARGETS :=  main main_static
 MODNAME := kcuttest.kbin
-.PHONY: all clean libkallsyms.so libkallsyms.a
+.PHONY: all clean 
 
 all: $(TARGETS)
 
