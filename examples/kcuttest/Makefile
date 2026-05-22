@@ -33,6 +33,6 @@ main_static: main.o mmap_stack_test.o libkallsyms.a libextension.a
 	$(CC) $(CFLAGS) -o $@ $^  libkallsyms.a libextension.a -lc ../../Symlib/build/L1/L1.a
 
 clean:
-	rm -rf $(wildcard $(TARGETS) *.o *.so *.a ext.kbin .ext)
+	rm -rf $(wildcard $(TARGETS) *.o ext.kbin .ext) $(wildcard libextension.a)
 
 
