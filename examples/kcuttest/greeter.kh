@@ -3,5 +3,6 @@
 
 int current_pid(void);
 int kernel_add(int a, int b);
+int greeter_k_stacktouch(void);
 
 #endif

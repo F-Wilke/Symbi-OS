@@ -20,6 +20,9 @@
 	
 	.equ RFLAGS_SWAPPED_GS, 1<<29
 	.equ RFLAGS_SWAPPED_GS_MASK, ~(1<<29)
+
+	.equ USER_CS, 0x33
+	.equ USER_SS, 0x2b
 	
 	.text
 	.align 16
@@ -219,7 +222,9 @@ pf_adaptor_asm_fix_ist_err_code:
 
 	jz  .Lerr_c_skip_flag_set
 
-	orl   $(ERRCODE_PF_USER), 0x20(%rsp)
+	orl   $(ERRCODE_PF_USER) , 0x20(%rsp)
+	movq   $(USER_CS) , 0x38(%rsp)
+	movq   $(USER_SS) , 0x50(%rsp)
 
 .Lerr_c_skip_flag_set:
 .Lerr_c_copy_frame_to_dest:

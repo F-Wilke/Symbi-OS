@@ -12,3 +12,16 @@ int kernel_add(int a, int b) {
 	pr_info("kernel_add: %d + %d = %d\n", a, b, a + b);
 }
 EXPORT_SYMBOL(kernel_add);
+
+
+int greeter_k_stacktouch(void)
+{
+  const int PGSIZE=4096;
+  const int n=PGSIZE * 8;
+  volatile char data[n];
+  int sum = 0;
+
+  for (int i=0; i<n; i+=4096) { data[i]=0xff; sum += data[i]; }  
+  
+  return sum;
+}

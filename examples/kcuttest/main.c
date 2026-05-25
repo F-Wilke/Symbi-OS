@@ -175,6 +175,11 @@ int main(int argc, char **argv) {
   int ss = stacktouch();
   printf("\t\t%d: %lx: STACK TOUCH TEST: END: ss=%d\n", mypid, cr3, ss);
 
+
+  printf("\t\t%d: %lx: IN-KERNEL STACK TOUCH TEST: START\n", mypid, cr3);
+  ss = greeter_k_stacktouch();
+  printf("\t\t%d: %lx: IN-KERNEL STACK TOUCH TEST: END: ss=%d\n", mypid, cr3, ss);
+
   printf("\t\t%d: %lx: READ NATIVE KERNEL SYMBOL TEST: START\n", mypid, cr3);
   printf("\t\toverflowuid: %d\n", overflowuid);
   printf("\t\t%d: %lx: READ NATIVE KERNEL SYMBOL TEST: END\n", mypid, cr3);
