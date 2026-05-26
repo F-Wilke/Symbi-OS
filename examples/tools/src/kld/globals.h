@@ -45,7 +45,8 @@ typedef struct {
   sigproc_t sigproc;        // signal procesing object
   bo_t *    bosbypath;      // hash table of binary objects (by path)
   bo_t *    bosbymod;       // hash table of binary objects (by modnm)
-  char *    executable;     // path of executable if one was specified
+  char *    executable;     // path of executable if one was specified (runtime)
+  char *    buildexe;       // path of executable to patch at build time (-o flag)
   char *    kotblfile;      // path of kernel object table file to create
   char **   dirs;           // directory search array 
   char *    fsname;         // default name for file system mount poinxot dirname
