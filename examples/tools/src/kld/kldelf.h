@@ -130,7 +130,12 @@ typedef struct {
 
 extern void *kld_generate_elf_mmap(const kld_sym *entries, int count,
 				   size_t strlen, const char *soname,
+				   int buildtime,
 				   size_t *out_size, int *out_fd);
+extern int   kld_update_elf_dynsym(const char *path, const kld_sym *entries,
+			       size_t n);
+extern int   kld_undef_elf_dynsym(const char *path, const kld_sym *entries,
+			       size_t n);
 extern int   kld_read_elf_syms(const char *path, int fd, kld_sym **entries,
 			   size_t *n, size_t *nmstrlen);
 extern int   kld_open_elf_secdata(kld_secdata *sd, const char *path,

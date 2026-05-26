@@ -22,6 +22,7 @@ ${KTARGET}: $(wildcard *.kc *.kh *.kS)
 
 ${TARGET}:  main.o mmap_stack_test.o 
 	$(CC) $(CFLAGS) -o $@ $^ ${LDFLAGS}
+	../tools/src/kld/kld -o $@ ${KFLAGS}
 	KLD_NOINTERP=1 ../tools/src/kldso/kldinst kcuttest
 
 -include *.d

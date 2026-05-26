@@ -8,6 +8,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <libelf.h>
 #include <gelf.h>
 
@@ -62,6 +63,7 @@ add_str(StrTab *st, const char *s)
 extern void*
 kld_generate_elf_mmap(const kld_sym *entries, int count,
 		      size_t nmstrlen, const char *soname,
+		      int buildtime,
 		      size_t *out_size, int *out_fd)
 {
   void *map = NULL; 
@@ -148,6 +150,9 @@ kld_generate_elf_mmap(const kld_sym *entries, int count,
     for(int i=0; i<count; i++) {
       sym_table[i+1]         = entries[sort_arr[i].orig].sym;
       sym_table[i+1].st_name = sym_offsets[i];
+      if (buildtime && GELF_ST_BIND(sym_table[i+1].st_info) == STB_GLOBAL)
+        sym_table[i+1].st_info = GELF_ST_INFO(STB_WEAK,
+                                               GELF_ST_TYPE(sym_table[i+1].st_info));
     }
 
     Elf_Scn *s_symtab = elf_newscn(elf);
@@ -217,6 +222,20 @@ kld_generate_elf_mmap(const kld_sym *entries, int count,
     // ld.so maps the entire file, not just a hardcoded 4096 bytes.
     off_t total_size = elf_update(elf, ELF_C_NULL);
 
+    // Set sh_addr = sh_offset for every ALLOC section.  Since PT_LOAD has
+    // p_vaddr=0 and p_offset=0, the virtual address of each mapped section
+    // equals its file offset.  libelf leaves sh_addr=0; setting it correctly
+    // fixes GDB's ".dynamic section not at expected address" warning.
+    { Elf_Scn *s = NULL;
+      while ((s = elf_nextscn(elf, s)) != NULL) {
+        GElf_Shdr fixsh; gelf_getshdr(s, &fixsh);
+        if (fixsh.sh_flags & SHF_ALLOC) {
+          fixsh.sh_addr = fixsh.sh_offset;
+          gelf_update_shdr(s, &fixsh);
+        }
+      }
+    }
+
     GElf_Ehdr ehdr; gelf_getehdr(elf, &ehdr);
     ehdr.e_type = ET_DYN; ehdr.e_machine = EM_X86_64;
     ehdr.e_shstrndx = elf_ndxscn(s_shstr);
@@ -224,13 +243,13 @@ kld_generate_elf_mmap(const kld_sym *entries, int count,
 
     GElf_Shdr t_sh;
     gelf_getshdr(s_dynstr, &t_sh); dyn_data[0].d_tag = DT_STRTAB;
-    dyn_data[0].d_un.d_ptr = t_sh.sh_offset;
+    dyn_data[0].d_un.d_ptr = t_sh.sh_addr;
     gelf_getshdr(s_dynsym, &t_sh); dyn_data[1].d_tag = DT_SYMTAB;
-    dyn_data[1].d_un.d_ptr = t_sh.sh_offset;
+    dyn_data[1].d_un.d_ptr = t_sh.sh_addr;
     dyn_data[2].d_tag = DT_STRSZ;  dyn_data[2].d_un.d_val = sym_st.top;
     dyn_data[3].d_tag = DT_SYMENT; dyn_data[3].d_un.d_val = sizeof(GElf_Sym);
     gelf_getshdr(s_gnuhash, &t_sh); dyn_data[4].d_tag = DT_GNU_HASH;
-    dyn_data[4].d_un.d_ptr = t_sh.sh_offset;
+    dyn_data[4].d_un.d_ptr = t_sh.sh_addr;
     if (soname_off) {
         dyn_data[5].d_tag = DT_SONAME; dyn_data[5].d_un.d_val = soname_off;
         dyn_data[6].d_tag = DT_FLAGS;  dyn_data[6].d_un.d_val = 0;
@@ -249,7 +268,7 @@ kld_generate_elf_mmap(const kld_sym *entries, int count,
 
     gelf_getphdr(elf, 1, &phdr);
     gelf_getshdr(s_dyn, &t_sh);
-    phdr.p_type = PT_DYNAMIC; phdr.p_offset = phdr.p_vaddr = t_sh.sh_offset;
+    phdr.p_type = PT_DYNAMIC; phdr.p_offset = t_sh.sh_offset; phdr.p_vaddr = t_sh.sh_addr;
     phdr.p_filesz = phdr.p_memsz = d_dyn->d_size; phdr.p_flags = PF_R;
     gelf_update_phdr(elf, 1, &phdr);
 
@@ -284,6 +303,150 @@ kld_generate_elf_mmap(const kld_sym *entries, int count,
     free(sort_arr); free(gh_buf); free(dyn_data);
 
     return map;
+}
+
+// qsort/bsearch comparator: sort kld_sym by name
+static int
+cmp_sym_by_name(const void *a, const void *b)
+{
+    return strcmp(((const kld_sym *)a)->name, ((const kld_sym *)b)->name);
+}
+
+// Update symbol values and bindings in-place in an existing kld-generated .so.
+// For each symbol in .dynsym and .symtab, if the name is found in 'entries',
+// st_value is overwritten and STB_WEAK is promoted to STB_GLOBAL.
+// Symbols absent from 'entries' are left unchanged (stay WEAK with value 0).
+extern int
+kld_update_elf_dynsym(const char *path, const kld_sym *entries, size_t n)
+{
+    int rc = 0;
+    int dfd = open(path, O_RDWR);
+    if (dfd == -1) { perror(path); return -1; }
+
+    // Sorted copy of entries for O(log n) lookup by name
+    kld_sym *sorted = malloc(n * sizeof(kld_sym));
+    if (!sorted) { close(dfd); return -1; }
+    memcpy(sorted, entries, n * sizeof(kld_sym));
+    qsort(sorted, n, sizeof(kld_sym), cmp_sym_by_name);
+
+    elf_version(EV_CURRENT);
+    Elf *elf = elf_begin(dfd, ELF_C_RDWR, NULL);
+    if (!elf) {
+        fprintf(stderr, "kld_update_elf_dynsym: elf_begin: %s\n", elf_errmsg(-1));
+        rc = -1; goto done;
+    }
+
+    Elf_Scn *scn = NULL;
+    while ((scn = elf_nextscn(elf, scn)) != NULL) {
+        GElf_Shdr shdr;
+        gelf_getshdr(scn, &shdr);
+        if (shdr.sh_type != SHT_DYNSYM && shdr.sh_type != SHT_SYMTAB)
+            continue;
+
+        Elf_Data *data = elf_getdata(scn, NULL);
+        if (!data) continue;
+
+        size_t sym_count = shdr.sh_size / shdr.sh_entsize;
+        int updated = 0;
+        for (size_t i = 1; i < sym_count; i++) {
+            GElf_Sym sym;
+            gelf_getsym(data, (int)i, &sym);
+            const char *sname = elf_strptr(elf, shdr.sh_link, sym.st_name);
+            if (!sname || !*sname) continue;
+            kld_sym key = { .name = (char *)sname };
+            const kld_sym *hit = bsearch(&key, sorted, n,
+                                         sizeof(kld_sym), cmp_sym_by_name);
+            if (!hit) continue;
+            sym.st_value = hit->sym.st_value;
+            if (GELF_ST_BIND(sym.st_info) == STB_WEAK)
+                sym.st_info = GELF_ST_INFO(STB_GLOBAL,
+                                           GELF_ST_TYPE(sym.st_info));
+            gelf_update_sym(data, (int)i, &sym);
+            updated = 1;
+        }
+        if (updated)
+            elf_flagdata(data, ELF_C_SET, ELF_F_DIRTY);
+    }
+
+    if (elf_update(elf, ELF_C_WRITE) < 0)
+        fprintf(stderr, "kld_update_elf_dynsym: elf_update: %s\n",
+                elf_errmsg(-1));
+    elf_end(elf);
+done:
+    free(sorted);
+    close(dfd);
+    return rc;
+}
+
+// Make kernel symbols UNDEF in the consumer executable's .dynsym so that
+// ld.so performs a full scope search at startup, resolving them from the
+// runtime DSOs (e.g. libkern.so with real kernel addresses) rather than
+// using the zero placeholder values from the buildtime .so.
+extern int
+kld_undef_elf_dynsym(const char *path, const kld_sym *entries, size_t n)
+{
+    int rc = 0;
+
+    kld_sym *sorted = malloc(n * sizeof(kld_sym));
+    if (!sorted) return -1;
+    memcpy(sorted, entries, n * sizeof(kld_sym));
+    qsort(sorted, n, sizeof(kld_sym), cmp_sym_by_name);
+
+    // mmap the file directly — avoids libelf write-layout issues entirely
+    int dfd = open(path, O_RDWR);
+    if (dfd == -1) { perror(path); free(sorted); return -1; }
+
+    struct stat st;
+    if (fstat(dfd, &st) < 0) {
+        perror(path); rc = -1; goto done;
+    }
+    void *base = mmap(NULL, st.st_size, PROT_READ|PROT_WRITE, MAP_SHARED, dfd, 0);
+    if (base == MAP_FAILED) {
+        perror("mmap"); rc = -1; goto done;
+    }
+
+    Elf64_Ehdr *ehdr = (Elf64_Ehdr *)base;
+    if (memcmp(ehdr->e_ident, ELFMAG, SELFMAG) != 0 ||
+        ehdr->e_ident[EI_CLASS] != ELFCLASS64) {
+        fprintf(stderr, "kld_undef_elf_dynsym: %s: not a 64-bit ELF\n", path);
+        rc = -1; goto unmap;
+    }
+
+    Elf64_Shdr *shdrs = (Elf64_Shdr *)((char *)base + ehdr->e_shoff);
+    Elf64_Shdr *dynsym_sh = NULL;
+
+    for (int i = 0; i < ehdr->e_shnum; i++) {
+        if (shdrs[i].sh_type == SHT_DYNSYM) { dynsym_sh = &shdrs[i]; break; }
+    }
+    if (!dynsym_sh || !dynsym_sh->sh_entsize) {
+        fprintf(stderr, "kld_undef_elf_dynsym: %s: no dynsym\n", path);
+        rc = -1; goto unmap;
+    }
+
+    Elf64_Shdr *strtab_sh = &shdrs[dynsym_sh->sh_link];
+    Elf64_Sym  *syms   = (Elf64_Sym *)((char *)base + dynsym_sh->sh_offset);
+    char       *strtab = (char *)base + strtab_sh->sh_offset;
+    size_t      sym_count = dynsym_sh->sh_size / dynsym_sh->sh_entsize;
+
+    fprintf(stderr, "kld_undef_elf_dynsym: %s: sym_count=%zu n=%zu\n",
+            path, sym_count, n);
+    for (size_t i = 1; i < sym_count; i++) {
+        // only patch WEAK ABS zero-value placeholders absorbed from buildtime DSOs
+        if (syms[i].st_shndx != SHN_ABS || syms[i].st_value != 0) continue;
+        const char *sname = strtab + syms[i].st_name;
+        kld_sym key = { .name = (char *)sname };
+        if (!bsearch(&key, sorted, n, sizeof(kld_sym), cmp_sym_by_name)) continue;
+        fprintf(stderr, "  patching [%zu] %s shndx=SHN_ABS->UNDEF\n", i, sname);
+        syms[i].st_shndx = SHN_UNDEF;
+        syms[i].st_value = 0;
+    }
+
+unmap:
+    munmap(base, st.st_size);
+done:
+    free(sorted);
+    close(dfd);
+    return rc;
 }
 
 extern int
@@ -501,7 +664,7 @@ int main() {
   for (int i = 0; i<n; i++) {
     nmstrlen += strlen(entries[i].name) + 1; // +1 for null byte
   }
-  elf_ptr = kld_generate_elf_mmap(entries, n, nmstrlen, "libstubs.so", &elf_size, &mfd);
+  elf_ptr = kld_generate_elf_mmap(entries, n, nmstrlen, "libstubs.so", 0, &elf_size, &mfd);
   
   if (elf_ptr != MAP_FAILED) {
     printf("ELF mapped at %p (Size: %zu)\n", elf_ptr, elf_size);

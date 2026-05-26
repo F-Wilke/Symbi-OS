@@ -4,6 +4,7 @@ globals_t GBLS = {
   .bosbypath      = NULL,
   .bosbymod       = NULL,
   .executable     = NULL,
+  .buildexe       = NULL,
   .kotblfile      = KOTBL_DFLT,
   .dirs           = NULL,
   .fsname         = FSNAME_DFLT,
@@ -23,7 +24,7 @@ usage(char *name, FILE *fp)
   fprintf(fp,
 	  "%s [-h] [-v] [-O lib] [-K dir] "
 	  "[-k kofile[,modnm[,kldopts]]] "
-	  "[Elf]\n"
+	  "[-o exe] [Elf]\n"
 	  "   -h     : print this usage message\n"
 	  "   -v     : verbose operation\n"
 	  "   -O lib : create kernel so as lib for %s "
@@ -34,6 +35,8 @@ usage(char *name, FILE *fp)
 	  "(can be repeated)\n"
 	  "   -k /proc/kallsyms: create a shared library from\n"
 	  "                      exported kernel runtime symbols\n"
+	  "   -o exe : (build time) patch exe dynsym so kernel symbols\n"
+	  "                      are UNDEF, enabling runtime resolution\n"
 	  "   elf    : optional elf file to process as follows:\n"
 	  "              For each libk found in the elf:\n"
 	  "                 find coresponding ko and load it\n"
@@ -423,7 +426,7 @@ GBLSInit(int argc, char **argv)
   }
   addDir(GBLS.cwd);
   
-  while ((opt = getopt(argc, argv, "K:k:O:hv")) != -1) {
+  while ((opt = getopt(argc, argv, "K:k:O:o:hv")) != -1) {
     switch (opt) {
     case 'K':
       addDir(optarg);
@@ -431,6 +434,9 @@ GBLSInit(int argc, char **argv)
     case 'O':
       GBLS.prockallsyms = 1;
       GBLS.libkernpath = optarg;  // static memory
+      break;
+    case 'o':
+      GBLS.buildexe = optarg;  // static memory
       break;
     case 'h':
       usage(argv[0],stderr);
@@ -508,6 +514,11 @@ GBLSInit(int argc, char **argv)
       rc = -1;
       goto done;
     }
+    if (GBLS.buildexe) {
+      fprintf(stderr, "ERROR: -o and positional executable cannot both be specified.\n");
+      rc = -1;
+      goto done;
+    }
     GBLS.executable = args[0];
     VLPRINT(2, "GBLS.executable=%s\n", GBLS.executable);
   }
@@ -540,9 +551,10 @@ writeso(const char *path, int fd, const kld_sym *entries, size_t n,
   int mfd;
   int dfd=fd;
   size_t elf_size;
+  int buildtime = (GBLS.executable == NULL);
   const char *soname = strrchr(path, '/');
   soname = soname ? soname + 1 : path;
-  void *elf_ptr = kld_generate_elf_mmap(entries, n, nmstrlen, soname, &elf_size, &mfd);
+  void *elf_ptr = kld_generate_elf_mmap(entries, n, nmstrlen, soname, buildtime, &elf_size, &mfd);
   
   if (elf_ptr != MAP_FAILED) {
     VPRINT("%s: ELF mapped at %p (Size: %zu)\n", path, elf_ptr, elf_size);
@@ -718,6 +730,8 @@ prcKallsyms(FILE *fp, char **kernpath)
   if (ksyms_i) {
     assert(GBLS.libkernpath);
     writeso(GBLS.libkernpath, -1, kentries, ksyms_i, knmstrlen);
+    if (GBLS.buildexe)
+      kld_undef_elf_dynsym(GBLS.buildexe, kentries, ksyms_i);
     *kernpath = realpath(GBLS.libkernpath, NULL);
     cleanupEntries(kentries, ksyms_i);
   }
@@ -727,6 +741,8 @@ prcKallsyms(FILE *fp, char **kernpath)
     HASH_ITER(hh, mhash, mod, tmp) {
       writeso(mod->bo->sofnm, mod->bo->sofd, mod->entries,
 	      mod->syms_i, mod->nmstrlen);
+      if (GBLS.buildexe)
+        kld_undef_elf_dynsym(GBLS.buildexe, mod->entries, mod->syms_i);
       cleanupEntries(mod->entries, mod->syms_i);
       free(mod->name);
       HASH_DEL(mhash, mod);
@@ -797,6 +813,8 @@ prcBO(bo_t *bo)
     goto done;
   }
   writeso(bo->sofnm, bo->sofd, entries, n, nmstrlen);
+  if (GBLS.buildexe)
+    kld_undef_elf_dynsym(GBLS.buildexe, entries, n);
   VPRINT("%s: read %zu symbols\n", bo->kofnm, n);
 
  done:

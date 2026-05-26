@@ -149,12 +149,15 @@ int main(int argc, char **argv) {
 
   printf("\t%d: BEFORE ELEVATE SYMBOL RESOLUTION TEST: BEGIN\n", mypid); 
   printf("\t_printk_ptr=%p\n", _printk_ptr);
-  printf("\toverflowuid=%p\n", &overflowuid);
+  void *sym = dlsym(RTLD_DEFAULT, "overflowuid");
+  printf("\tdlsym:overflowuid=%p GOT:overflowuid=%p\n", sym, &overflowuid);
   
   intptr_t  pfaddr   = (intptr_t)dlsym(RTLD_DEFAULT, "asm_exc_page_fault");
   intptr_t  dfaddr   = (intptr_t)dlsym(RTLD_DEFAULT, "asm_exc_double_fault");
   printf("\tpfaddr=0x%lx dfaddr=0x%lx\n", pfaddr, dfaddr);
   printf("\t%d: BEFORE ELEVATE SYMBOL RESOLUTION TEST: END\n", mypid);
+
+  exit(0);
   
   unsigned long cr3=0xdeadbeefdeadbeef;
   
