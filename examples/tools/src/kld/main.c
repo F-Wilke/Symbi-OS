@@ -642,6 +642,330 @@ openKallsyms(FILE **fp)
   return 0;
 }
 
+#define KLD_RUN_FALLBACK_ROOT "/run/kld"
+#define KLD_RUN_FALLBACK_TMP  "/tmp"
+
+static uint64_t
+fnv1a64_update(uint64_t h, const void *buf, size_t n)
+{
+  const unsigned char *p = (const unsigned char *)buf;
+  for (size_t i = 0; i < n; i++) {
+    h ^= (uint64_t)p[i];
+    h *= 1099511628211ULL;
+  }
+  return h;
+}
+
+static uint64_t
+fnv1a64_str(const char *s)
+{
+  return fnv1a64_update(1469598103934665603ULL, s, strlen(s));
+}
+
+static int
+read_boot_id(char *buf, size_t n)
+{
+  FILE *f = fopen("/proc/sys/kernel/random/boot_id", "r");
+  if (!f) return -1;
+  if (!fgets(buf, (int)n, f)) {
+    fclose(f);
+    return -1;
+  }
+  fclose(f);
+  size_t len = strlen(buf);
+  while (len && (buf[len-1] == '\n' || buf[len-1] == '\r')) buf[--len] = '\0';
+  return (len > 0) ? 0 : -1;
+}
+
+static int
+parse_uid_env(const char *s, uid_t *uid_out)
+{
+  char *end = NULL;
+  unsigned long v;
+  if (!s || !*s) return -1;
+  errno = 0;
+  v = strtoul(s, &end, 10);
+  if (errno || !end || *end != '\0') return -1;
+  *uid_out = (uid_t)v;
+  return 0;
+}
+
+static int
+resolve_run_dir(char *out, size_t outn)
+{
+  uid_t euid = geteuid();
+  uid_t owner = euid;
+  uid_t sudo_uid = 0;
+  int has_sudo_uid = (euid == 0 &&
+                      parse_uid_env(getenv("SUDO_UID"), &sudo_uid) == 0);
+  char base[PATH_MAX];
+  const char *xdg = getenv("XDG_RUNTIME_DIR");
+  int n;
+
+  if (has_sudo_uid) owner = sudo_uid;
+
+  if (has_sudo_uid) {
+    n = snprintf(base, sizeof(base), "/run/user/%lu",
+                 (unsigned long)owner);
+    if (n > 0 && (size_t)n < sizeof(base) &&
+        access(base, W_OK | X_OK) == 0) {
+      n = snprintf(out, outn, "%s/kld", base);
+      return (n > 0 && (size_t)n < outn) ? 0 : -1;
+    }
+  }
+
+  if (xdg && xdg[0] == '/' && access(xdg, W_OK | X_OK) == 0) {
+    n = snprintf(out, outn, "%s/kld", xdg);
+    return (n > 0 && (size_t)n < outn) ? 0 : -1;
+  }
+
+  n = snprintf(base, sizeof(base), "/run/user/%lu", (unsigned long)euid);
+  if (n > 0 && (size_t)n < sizeof(base) &&
+      access(base, W_OK | X_OK) == 0) {
+    n = snprintf(out, outn, "%s/kld", base);
+    return (n > 0 && (size_t)n < outn) ? 0 : -1;
+  }
+
+  if (euid == 0) {
+    n = snprintf(out, outn, "%s/u%lu", KLD_RUN_FALLBACK_ROOT,
+                 (unsigned long)owner);
+  } else {
+    n = snprintf(out, outn, "%s/kld.u%lu", KLD_RUN_FALLBACK_TMP,
+                 (unsigned long)euid);
+  }
+  return (n > 0 && (size_t)n < outn) ? 0 : -1;
+}
+
+static int
+ensure_dir_tree(const char *path, mode_t mode)
+{
+  char tmp[PATH_MAX];
+  size_t len;
+  if (!path || !*path) return -1;
+  len = strnlen(path, sizeof(tmp));
+  if (len == 0 || len >= sizeof(tmp)) return -1;
+  memcpy(tmp, path, len + 1);
+  for (size_t i = 1; i < len; i++) {
+    if (tmp[i] == '/') {
+      tmp[i] = '\0';
+      if (mkdir(tmp, mode) < 0 && errno != EEXIST) return -1;
+      tmp[i] = '/';
+    }
+  }
+  if (mkdir(tmp, mode) < 0 && errno != EEXIST) return -1;
+  return 0;
+}
+
+static int
+ensure_stamp_parent_dir(const char *stamp_path)
+{
+  char tmp[PATH_MAX];
+  char *dir;
+  size_t n = strnlen(stamp_path, sizeof(tmp));
+  if (n == 0 || n >= sizeof(tmp)) return -1;
+  memcpy(tmp, stamp_path, n + 1);
+  dir = dirname(tmp);
+  return ensure_dir_tree(dir, 0700);
+}
+
+static void
+make_stamp_path(char *out, size_t outn, const char *kind, const char *key)
+{
+  char run_dir[PATH_MAX];
+  uint64_t h = fnv1a64_str(key);
+  if (resolve_run_dir(run_dir, sizeof(run_dir)) < 0) {
+    out[0] = '\0';
+    return;
+  }
+  snprintf(out, outn, "%s/%s.%016" PRIx64 ".stamp", run_dir, kind, h);
+}
+
+static uintptr_t
+syms_text_anchor(const kld_sym *entries, size_t n)
+{
+  uintptr_t a = 0;
+  for (size_t i = 0; i < n; i++) {
+    uintptr_t v = (uintptr_t)entries[i].sym.st_value;
+    if (v == 0) continue;
+    if (a == 0 || v < a) a = v;
+  }
+  return a;
+}
+
+static int
+cmp_sym_name_ptr(const void *a, const void *b)
+{
+  const kld_sym *sa = *(const kld_sym *const *)a;
+  const kld_sym *sb = *(const kld_sym *const *)b;
+  return strcmp(sa->name, sb->name);
+}
+
+static uint64_t
+syms_hash(const kld_sym *entries, size_t n)
+{
+  if (!entries || n == 0) return 0;
+  const kld_sym **ptrs = malloc(sizeof(ptrs[0]) * n);
+  if (!ptrs) return 0;
+  for (size_t i = 0; i < n; i++) ptrs[i] = &entries[i];
+  qsort(ptrs, n, sizeof(ptrs[0]), cmp_sym_name_ptr);
+
+  uint64_t h = 1469598103934665603ULL;
+  for (size_t i = 0; i < n; i++) {
+    const kld_sym *s = ptrs[i];
+    h = fnv1a64_update(h, s->name, strlen(s->name) + 1);
+    h = fnv1a64_update(h, &(s->sym.st_value), sizeof(s->sym.st_value));
+  }
+  free(ptrs);
+  return h;
+}
+
+static int
+read_stamp(const char *stamp_path, char *boot_id, size_t boot_n,
+           uintptr_t *anchor, uint64_t *hash)
+{
+  FILE *f = fopen(stamp_path, "r");
+  if (!f) return -1;
+  char bid[128] = {0};
+  uintptr_t a = 0;
+  uint64_t h = 0;
+  int n = fscanf(f, "boot=%127s\nanchor=%" SCNxPTR "\nhash=%" SCNx64 "\n",
+                 bid, &a, &h);
+  fclose(f);
+  if (n != 3) return -1;
+  strncpy(boot_id, bid, boot_n - 1);
+  boot_id[boot_n - 1] = '\0';
+  if (anchor) *anchor = a;
+  if (hash) *hash = h;
+  return 0;
+}
+
+static int
+write_stamp(const char *stamp_path, const char *boot_id,
+            uintptr_t anchor, uint64_t hash)
+{
+  if (ensure_stamp_parent_dir(stamp_path) < 0) return -1;
+  char tmp[PATH_MAX];
+  snprintf(tmp, sizeof(tmp), "%s.tmp.%ld", stamp_path, (long)getpid());
+  FILE *f = fopen(tmp, "w");
+  if (!f) return -1;
+  fprintf(f, "boot=%s\nanchor=%" PRIxPTR "\nhash=%" PRIx64 "\n",
+          boot_id, anchor, hash);
+  fclose(f);
+  if (rename(tmp, stamp_path) < 0) {
+    unlink(tmp);
+    return -1;
+  }
+  return 0;
+}
+
+static int
+update_so_runtime(const char *path, const kld_sym *entries, size_t n,
+                  size_t nmstrlen)
+{
+  if (kld_update_elf_dynsym(path, entries, n) == 0) {
+    VLPRINT(2, "runtime so update in-place: %s\n", path);
+    return 0;
+  }
+  VLPRINT(1, "runtime so update fallback rebuild: %s\n", path);
+  writeso(path, -1, entries, n, nmstrlen);
+  return 1;
+}
+
+static int
+fast_precheck_runtime_skip(int *all_skip)
+{
+  FILE *fp = NULL;
+  char *line = NULL, *module = NULL;
+  size_t len = 0;
+  uintptr_t addr = 0;
+  int n = 0, mod_start = 0, mod_end = 0;
+  char type = 0;
+
+  struct ModAnchor {
+    UT_hash_handle hh;
+    char *name;
+    bo_t *bo;
+    uintptr_t anchor;
+    int seen;
+    int skip;
+  } *m = NULL;
+
+  char boot_id[128] = {0};
+  int libkern_skip = 0;
+  *all_skip = 0;
+
+  if (read_boot_id(boot_id, sizeof(boot_id)) < 0) return -1;
+
+  bo_t *bo_it, *bo_tmp;
+  HASH_ITER(hhmod, GBLS.bosbymod, bo_it, bo_tmp) {
+    struct ModAnchor *x = calloc(1, sizeof(*x));
+    x->name = strdup(bo_it->modnm);
+    x->bo = bo_it;
+    x->skip = 0;
+    HASH_ADD_KEYPTR(hh, m, x->name, strlen(x->name), x);
+  }
+
+  if (openKallsyms(&fp) < 0) goto done;
+  while (getline(&line, &len, fp) != -1) {
+    mod_start = mod_end = 0;
+    n = sscanf(line, "%" SCNxPTR " %c %*s %n%*s%n", &addr, &type,
+               &mod_start, &mod_end);
+    if (n != 2 || mod_start == 0 || mod_end <= mod_start) continue;
+    module = &line[mod_start];
+    module[0] = '['; module++;
+    if (line[mod_end-1] == '\n' || line[mod_end-1] == '\r' ||
+        line[mod_end-1] == ']') line[mod_end-1] = '\0';
+    line[mod_end] = '\0';
+    struct ModAnchor *x = NULL;
+    HASH_FIND_STR(m, module, x);
+    if (!x) continue;
+    if (!x->seen || addr < x->anchor) x->anchor = addr;
+    x->seen = 1;
+  }
+
+  {
+    char sp[PATH_MAX], sbid[128];
+    uintptr_t sanchor = 0;
+    uint64_t shash = 0;
+    make_stamp_path(sp, sizeof(sp), "libkern", GBLS.libkernpath);
+    if (sp[0] == '\0') {
+      VLPRINT(1, "%s", "runtime stamp path unavailable; skipping precheck stamp read\n");
+    } else {
+      libkern_skip = (access(GBLS.libkernpath, R_OK) == 0 &&
+                      read_stamp(sp, sbid, sizeof(sbid), &sanchor, &shash) == 0 &&
+                      strcmp(sbid, boot_id) == 0);
+    }
+  }
+
+  *all_skip = libkern_skip;
+  struct ModAnchor *x, *xt;
+  HASH_ITER(hh, m, x, xt) {
+    char sp[PATH_MAX], sbid[128];
+    uintptr_t sanchor = 0;
+    uint64_t shash = 0;
+    x->skip = 0;
+    if (x->seen && access(x->bo->sofnm, R_OK) == 0) {
+      make_stamp_path(sp, sizeof(sp), "mod", x->bo->sofnm);
+      if (sp[0] == '\0') {
+        VLPRINT(1, "runtime stamp path unavailable; skipping precheck stamp read: %s\n",
+                x->bo->sofnm);
+      } else if (read_stamp(sp, sbid, sizeof(sbid), &sanchor, &shash) == 0 &&
+                 strcmp(sbid, boot_id) == 0 && sanchor == x->anchor) {
+          x->skip = 1;
+      }
+    }
+    if (!x->skip) *all_skip = 0;
+    HASH_DEL(m, x);
+    free(x->name);
+    free(x);
+  }
+
+done:
+  if (fp) fclose(fp);
+  if (line) free(line);
+  return 0;
+}
+
 static void
 prcKallsyms(FILE *fp, char **kernpath)
 {
@@ -666,6 +990,11 @@ prcKallsyms(FILE *fp, char **kernpath)
     size_t         syms_i;
     size_t         nmstrlen;
   } * mhash = NULL;
+
+  int all_skip = 0;
+  if (fast_precheck_runtime_skip(&all_skip) == 0 && all_skip) {
+    VLPRINT(2, "%s", "runtime fast-precheck matched; verifying via full parse\n");
+  }
 
   
   while (getline(&line, &len, fp) != -1 ) {
@@ -746,7 +1075,32 @@ prcKallsyms(FILE *fp, char **kernpath)
   
   if (ksyms_i) {
     assert(GBLS.libkernpath);
-    writeso(GBLS.libkernpath, -1, kentries, ksyms_i, knmstrlen);
+    uint64_t khash = syms_hash(kentries, ksyms_i);
+    uintptr_t kanchor = syms_text_anchor(kentries, ksyms_i);
+    char boot_id[128] = {0}, sbid[128] = {0}, sp[PATH_MAX];
+    uintptr_t sanchor = 0;
+    uint64_t shash = 0;
+    int do_update = 1;
+    if (read_boot_id(boot_id, sizeof(boot_id)) == 0) {
+      make_stamp_path(sp, sizeof(sp), "libkern", GBLS.libkernpath);
+      if (sp[0] == '\0') {
+        VLPRINT(1, "%s", "runtime stamp path unavailable; skipping stamp read/write for libkern\n");
+      } else if (access(GBLS.libkernpath, R_OK) == 0 &&
+                 read_stamp(sp, sbid, sizeof(sbid), &sanchor, &shash) == 0 &&
+                 strcmp(sbid, boot_id) == 0 && shash == khash) {
+        do_update = 0;
+      }
+      if (do_update) {
+        update_so_runtime(GBLS.libkernpath, kentries, ksyms_i, knmstrlen);
+        if (sp[0] != '\0' && write_stamp(sp, boot_id, kanchor, khash) < 0) {
+          VLPRINT(1, "runtime stamp write failed: %s\n", sp);
+        }
+      } else {
+        VLPRINT(2, "runtime so skip (hash match): %s\n", GBLS.libkernpath);
+      }
+    } else {
+      update_so_runtime(GBLS.libkernpath, kentries, ksyms_i, knmstrlen);
+    }
     if (GBLS.buildexe) {
       const char *ksname = strrchr(GBLS.libkernpath, '/');
       ksname = ksname ? ksname + 1 : GBLS.libkernpath;
@@ -759,8 +1113,36 @@ prcKallsyms(FILE *fp, char **kernpath)
   {
     struct Module *mod, *tmp;
     HASH_ITER(hh, mhash, mod, tmp) {
-      writeso(mod->bo->sofnm, mod->bo->sofd, mod->entries,
-	      mod->syms_i, mod->nmstrlen);
+      uint64_t mhashv = syms_hash(mod->entries, mod->syms_i);
+      uintptr_t manchor = syms_text_anchor(mod->entries, mod->syms_i);
+      char boot_id[128] = {0}, sbid[128] = {0}, sp[PATH_MAX];
+      uintptr_t sanchor = 0;
+      uint64_t shash = 0;
+      int do_update = 1;
+      if (read_boot_id(boot_id, sizeof(boot_id)) == 0) {
+        make_stamp_path(sp, sizeof(sp), "mod", mod->bo->sofnm);
+        if (sp[0] == '\0') {
+          VLPRINT(1, "runtime stamp path unavailable; skipping stamp read/write: %s\n",
+                  mod->bo->sofnm);
+        } else if (access(mod->bo->sofnm, R_OK) == 0 &&
+                   read_stamp(sp, sbid, sizeof(sbid), &sanchor, &shash) == 0 &&
+                   strcmp(sbid, boot_id) == 0 &&
+                   sanchor == manchor && shash == mhashv) {
+          do_update = 0;
+        }
+        if (do_update) {
+          update_so_runtime(mod->bo->sofnm, mod->entries,
+                            mod->syms_i, mod->nmstrlen);
+          if (sp[0] != '\0' && write_stamp(sp, boot_id, manchor, mhashv) < 0) {
+            VLPRINT(1, "runtime stamp write failed: %s\n", sp);
+          }
+        } else {
+          VLPRINT(2, "runtime so skip (anchor/hash match): %s\n", mod->bo->sofnm);
+        }
+      } else {
+        update_so_runtime(mod->bo->sofnm, mod->entries,
+                          mod->syms_i, mod->nmstrlen);
+      }
       if (GBLS.buildexe) {
         const char *msname = strrchr(mod->bo->sofnm, '/');
         msname = msname ? msname + 1 : mod->bo->sofnm;
@@ -1058,7 +1440,7 @@ prcExec(const char *exec, int buildtime, char **ldpath_out)
 	  GBLS.libkernpath = fnm;
 	  if (ldpath_out) append_ld_dir(fnm, &lddirs, &lddirc, &lddirmax);
 	} else {
-	  if (addbo(fnm, opts, modnm, &bo, 0, 1) <0) {
+	  if (addbo(fnm, opts, modnm, &bo, 1, 1) <0) {
 	    assert(0);
 	    rc = -1;
 	    goto done;
