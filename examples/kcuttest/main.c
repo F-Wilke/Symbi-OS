@@ -157,8 +157,6 @@ int main(int argc, char **argv) {
   printf("\tpfaddr=0x%lx dfaddr=0x%lx\n", pfaddr, dfaddr);
   printf("\t%d: BEFORE ELEVATE SYMBOL RESOLUTION TEST: END\n", mypid);
 
-  exit(0);
-  
   unsigned long cr3=0xdeadbeefdeadbeef;
   
   if (evac) kcut_evacuate(1);
