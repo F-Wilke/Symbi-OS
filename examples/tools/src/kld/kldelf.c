@@ -12,7 +12,7 @@
 #include <libelf.h>
 #include <gelf.h>
 
-#include "kldelf.h"
+#include "incs.h"
 
 typedef struct { char *buf; size_t top; } StrTab;
 
@@ -382,8 +382,33 @@ done:
 // ld.so performs a full scope search at startup, resolving them from the
 // runtime DSOs (e.g. libkern.so with real kernel addresses) rather than
 // using the zero placeholder values from the buildtime .so.
+
+// Returns 1 if soname appears as a DT_NEEDED entry in the mapped executable, 0 otherwise.
+static int
+check_dt_needed(void *base, Elf64_Shdr *shdrs, int shnum, const char *soname)
+{
+    Elf64_Shdr *dyn_sh = NULL;
+    for (int i = 0; i < shnum; i++) {
+        if (shdrs[i].sh_type == SHT_DYNAMIC) { dyn_sh = &shdrs[i]; break; }
+    }
+    if (!dyn_sh || !dyn_sh->sh_entsize) return 0;
+
+    char      *dynstr = (char *)base + shdrs[dyn_sh->sh_link].sh_offset;
+    Elf64_Dyn *dyns   = (Elf64_Dyn *)((char *)base + dyn_sh->sh_offset);
+    size_t     count  = dyn_sh->sh_size / dyn_sh->sh_entsize;
+
+    for (size_t i = 0; i < count; i++) {
+        if (dyns[i].d_tag == DT_NULL) break;
+        if (dyns[i].d_tag == DT_NEEDED &&
+            strcmp(dynstr + dyns[i].d_un.d_val, soname) == 0)
+            return 1;
+    }
+    return 0;
+}
+
 extern int
-kld_undef_elf_dynsym(const char *path, const kld_sym *entries, size_t n)
+kld_undef_elf_dynsym(const char *path, const char *soname,
+                     const kld_sym *entries, size_t n)
 {
     int rc = 0;
 
@@ -413,8 +438,15 @@ kld_undef_elf_dynsym(const char *path, const kld_sym *entries, size_t n)
     }
 
     Elf64_Shdr *shdrs = (Elf64_Shdr *)((char *)base + ehdr->e_shoff);
-    Elf64_Shdr *dynsym_sh = NULL;
 
+    // guard: only patch if the executable was actually linked against this .so
+    if (!check_dt_needed(base, shdrs, ehdr->e_shnum, soname)) {
+        VLPRINT(2, "kld_undef_elf_dynsym: %s not in DT_NEEDED of %s, skipping\n",
+                soname, path);
+        goto unmap;
+    }
+
+    Elf64_Shdr *dynsym_sh = NULL;
     for (int i = 0; i < ehdr->e_shnum; i++) {
         if (shdrs[i].sh_type == SHT_DYNSYM) { dynsym_sh = &shdrs[i]; break; }
     }
@@ -428,15 +460,14 @@ kld_undef_elf_dynsym(const char *path, const kld_sym *entries, size_t n)
     char       *strtab = (char *)base + strtab_sh->sh_offset;
     size_t      sym_count = dynsym_sh->sh_size / dynsym_sh->sh_entsize;
 
-    fprintf(stderr, "kld_undef_elf_dynsym: %s: sym_count=%zu n=%zu\n",
-            path, sym_count, n);
+    VLPRINT(2, "%s: soname=%s sym_count=%zu n=%zu\n", path, soname, sym_count, n);
     for (size_t i = 1; i < sym_count; i++) {
         // only patch WEAK ABS zero-value placeholders absorbed from buildtime DSOs
         if (syms[i].st_shndx != SHN_ABS || syms[i].st_value != 0) continue;
         const char *sname = strtab + syms[i].st_name;
         kld_sym key = { .name = (char *)sname };
         if (!bsearch(&key, sorted, n, sizeof(kld_sym), cmp_sym_by_name)) continue;
-        fprintf(stderr, "  patching [%zu] %s shndx=SHN_ABS->UNDEF\n", i, sname);
+        VLPRINT(2, "  patching [%zu] %s shndx=SHN_ABS->UNDEF\n", i, sname);
         syms[i].st_shndx = SHN_UNDEF;
         syms[i].st_value = 0;
     }
@@ -507,6 +538,239 @@ kld_read_elf_syms(const char *path, int fd, kld_sym **entries, size_t *n,
   *entries = ents;
   *n = ei;
   return rc;
+}
+
+/* COPILOT: Claude Sonnet 4.6 generated base version
+ * kld_add_elf_section - append a new SHT_PROGBITS section to an ELF64 file
+ *
+ * Appends section data at the end of the file and rewrites the section header
+ * table (and .shstrtab) in the new tail, updating only e_shoff and e_shnum in
+ * the ELF header.  No existing segment or section data is touched, so no
+ * "allocated section not in segment" warnings occur.
+ *
+ * If secname already exists in the binary, returns 0 without modifying it.
+ */
+extern int
+kld_add_elf_section(const char *path, const char *secname,
+                    const void *data, size_t size)
+{
+    int      rc         = 0;
+    int      fd         = -1;
+    void    *base       = MAP_FAILED;
+    size_t   mmap_size  = 0;
+    Elf64_Shdr *orig_shdrs = NULL;
+    char    *new_shstrtab  = NULL;
+
+    fd = open(path, O_RDWR);
+    if (fd < 0) { perror(path); return -1; }
+
+    struct stat st;
+    if (fstat(fd, &st) < 0) { perror(path); rc = -1; goto done; }
+    mmap_size = (size_t)st.st_size;
+
+    base = mmap(NULL, mmap_size, PROT_READ, MAP_PRIVATE, fd, 0);
+    if (base == MAP_FAILED) { perror("mmap"); rc = -1; goto done; }
+
+    Elf64_Ehdr *ehdr = (Elf64_Ehdr *)base;
+    if (memcmp(ehdr->e_ident, ELFMAG, SELFMAG) != 0 ||
+            ehdr->e_ident[EI_CLASS] != ELFCLASS64) {
+        fprintf(stderr, "kld_add_elf_section: %s: not ELF64\n", path);
+        rc = -1; goto done;
+    }
+
+    uint64_t orig_shoff    = ehdr->e_shoff;
+    uint16_t orig_shnum    = ehdr->e_shnum;
+    uint16_t orig_shstrndx = ehdr->e_shstrndx;
+    size_t   shentsize     = ehdr->e_shentsize;
+
+    if (!orig_shoff || !orig_shnum || orig_shstrndx == SHN_UNDEF) {
+        fprintf(stderr, "kld_add_elf_section: %s: no section headers\n", path);
+        rc = -1; goto done;
+    }
+
+    Elf64_Shdr *shdrs    = (Elf64_Shdr *)((char *)base + orig_shoff);
+    const char *shstrtab = (const char *)base + shdrs[orig_shstrndx].sh_offset;
+    size_t shstrtab_size = shdrs[orig_shstrndx].sh_size;
+
+    for (uint16_t i = 1; i < orig_shnum; i++) {
+        if (shdrs[i].sh_name < shstrtab_size &&
+                strcmp(shstrtab + shdrs[i].sh_name, secname) == 0) {
+            VLPRINT(1, "kld_add_elf_section: %s: %s already present\n",
+                    path, secname);
+            goto done;
+        }
+    }
+
+    uint32_t secname_off    = (uint32_t)shstrtab_size;
+    size_t   secname_len    = strlen(secname) + 1;
+    size_t   new_shstr_size = shstrtab_size + secname_len;
+
+    orig_shdrs = malloc(orig_shnum * shentsize);
+    if (!orig_shdrs) { rc = -1; goto done; }
+    memcpy(orig_shdrs, shdrs, orig_shnum * shentsize);
+
+    new_shstrtab = malloc(new_shstr_size);
+    if (!new_shstrtab) { rc = -1; goto done; }
+    memcpy(new_shstrtab, shstrtab, shstrtab_size);
+    memcpy(new_shstrtab + shstrtab_size, secname, secname_len);
+
+    munmap(base, mmap_size);
+    base = MAP_FAILED;
+
+#define ALIGN8(x) (((size_t)(x) + 7u) & ~7u)
+    size_t sec_off       = ALIGN8(mmap_size);
+    size_t new_shstr_off = ALIGN8(sec_off + size);
+    size_t new_shdr_off  = ALIGN8(new_shstr_off + new_shstr_size);
+    size_t new_file_size = new_shdr_off + (orig_shnum + 1) * shentsize;
+
+    if (ftruncate(fd, (off_t)new_file_size) < 0) {
+        perror("ftruncate"); rc = -1; goto done;
+    }
+
+    mmap_size = new_file_size;
+    base = mmap(NULL, mmap_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (base == MAP_FAILED) { perror("mmap"); rc = -1; goto done; }
+
+    memcpy((char *)base + sec_off, data, size);
+    memcpy((char *)base + new_shstr_off, new_shstrtab, new_shstr_size);
+
+    Elf64_Shdr *new_shdrs = (Elf64_Shdr *)((char *)base + new_shdr_off);
+    memcpy(new_shdrs, orig_shdrs, orig_shnum * shentsize);
+    new_shdrs[orig_shstrndx].sh_offset = (Elf64_Off)new_shstr_off;
+    new_shdrs[orig_shstrndx].sh_size   = (Elf64_Xword)new_shstr_size;
+
+    Elf64_Shdr *new_sh = &new_shdrs[orig_shnum];
+    memset(new_sh, 0, shentsize);
+    new_sh->sh_name      = secname_off;
+    new_sh->sh_type      = SHT_PROGBITS;
+    new_sh->sh_flags     = 0;           /* no SHF_ALLOC — not memory-loaded */
+    new_sh->sh_offset    = (Elf64_Off)sec_off;
+    new_sh->sh_size      = (Elf64_Xword)size;
+    new_sh->sh_addralign = 1;
+
+    ehdr = (Elf64_Ehdr *)base;          /* base changed after remap */
+    ehdr->e_shoff = (Elf64_Off)new_shdr_off;
+    ehdr->e_shnum = (Elf64_Half)(orig_shnum + 1);
+    /* e_shstrndx index is unchanged */
+
+done:
+    if (base != MAP_FAILED) munmap(base, mmap_size);
+    if (fd >= 0) close(fd);
+    free(orig_shdrs);
+    free(new_shstrtab);
+    return rc;
+}
+
+extern int
+kld_get_interp(const char *path, char *buf, size_t bufsz)
+{
+    int rc = -1;
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) { perror(path); return -1; }
+
+    struct stat st;
+    if (fstat(fd, &st) < 0) { perror(path); close(fd); return -1; }
+    void *base = mmap(NULL, (size_t)st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+    if (base == MAP_FAILED) { perror("mmap"); close(fd); return -1; }
+
+    Elf64_Ehdr *ehdr = (Elf64_Ehdr *)base;
+    if (memcmp(ehdr->e_ident, ELFMAG, SELFMAG) != 0 ||
+        ehdr->e_ident[EI_CLASS] != ELFCLASS64) {
+        fprintf(stderr, "kld_get_interp: %s: not ELF64\n", path);
+        goto done;
+    }
+
+    Elf64_Phdr *phdrs = (Elf64_Phdr *)((char *)base + ehdr->e_phoff);
+    for (int i = 0; i < ehdr->e_phnum; i++) {
+        if (phdrs[i].p_type != PT_INTERP) continue;
+        size_t n = (size_t)phdrs[i].p_filesz;
+        if (n == 0 || phdrs[i].p_offset + n > (size_t)st.st_size) break;
+        if (n > bufsz) n = bufsz;
+        memcpy(buf, (char *)base + phdrs[i].p_offset, n);
+        buf[bufsz - 1] = '\0';
+        rc = 0;
+        break;
+    }
+
+done:
+    munmap(base, (size_t)st.st_size);
+    close(fd);
+    return rc;
+}
+
+extern int
+kld_set_interp(const char *path, const char *new_interp)
+{
+    int rc = -1;
+    int fd = open(path, O_RDWR);
+    if (fd < 0) { perror(path); return -1; }
+
+    struct stat st;
+    if (fstat(fd, &st) < 0) { perror(path); goto done; }
+    size_t old_size = (size_t)st.st_size;
+
+    void *base = mmap(NULL, old_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (base == MAP_FAILED) { perror("mmap"); goto done; }
+
+    Elf64_Ehdr *ehdr = (Elf64_Ehdr *)base;
+    if (memcmp(ehdr->e_ident, ELFMAG, SELFMAG) != 0 ||
+        ehdr->e_ident[EI_CLASS] != ELFCLASS64) {
+        fprintf(stderr, "kld_set_interp: %s: not ELF64\n", path);
+        munmap(base, old_size);
+        goto done;
+    }
+
+    size_t interp_len = strlen(new_interp) + 1;
+    size_t interp_off = (old_size + 7u) & ~7u;
+    size_t new_size = interp_off + interp_len;
+
+    munmap(base, old_size);
+    base = MAP_FAILED;
+
+    if (ftruncate(fd, (off_t)new_size) < 0) { perror("ftruncate"); goto done; }
+    base = mmap(NULL, new_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (base == MAP_FAILED) { perror("mmap"); goto done; }
+
+    ehdr = (Elf64_Ehdr *)base;
+    Elf64_Phdr *phdrs = (Elf64_Phdr *)((char *)base + ehdr->e_phoff);
+    Elf64_Phdr *interp_ph = NULL;
+    for (int i = 0; i < ehdr->e_phnum; i++) {
+        if (phdrs[i].p_type == PT_INTERP) {
+            interp_ph = &phdrs[i];
+            break;
+        }
+    }
+    if (!interp_ph) {
+        fprintf(stderr, "kld_set_interp: %s: PT_INTERP not found\n", path);
+        goto unmap;
+    }
+
+    memcpy((char *)base + interp_off, new_interp, interp_len);
+    interp_ph->p_offset = (Elf64_Off)interp_off;
+    interp_ph->p_filesz = (Elf64_Xword)interp_len;
+    interp_ph->p_memsz  = (Elf64_Xword)interp_len;
+
+    if (ehdr->e_shoff && ehdr->e_shnum && ehdr->e_shstrndx != SHN_UNDEF) {
+        Elf64_Shdr *shdrs = (Elf64_Shdr *)((char *)base + ehdr->e_shoff);
+        const char *shstr = (const char *)base + shdrs[ehdr->e_shstrndx].sh_offset;
+        size_t shstr_size = shdrs[ehdr->e_shstrndx].sh_size;
+
+        for (int i = 0; i < ehdr->e_shnum; i++) {
+            if (shdrs[i].sh_name >= shstr_size) continue;
+            if (strcmp(shstr + shdrs[i].sh_name, ".interp") == 0) {
+                shdrs[i].sh_offset = (Elf64_Off)interp_off;
+                shdrs[i].sh_size   = (Elf64_Xword)interp_len;
+                break;
+            }
+        }
+    }
+
+    rc = 0;
+unmap:
+    munmap(base, new_size);
+done:
+    close(fd);
+    return rc;
 }
 
 extern int
@@ -619,7 +883,7 @@ kld_close_elf_secdata(kld_secdata *sd, int fd)
 }
 
 #ifdef MAIN
-
+globals_t GBLS = { .verbose = 2 };
 int main() {
   kld_sym entries[7];
   kld_sym *e;

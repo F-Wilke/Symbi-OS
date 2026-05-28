@@ -2,12 +2,15 @@ SRCS       := main.c kldfs.c fs.c sigproc.c kldelf.c modinfo.c loadbo.c
 OBJS       := $(SRCS:%.c=%.o)
 O          := 0
 CFLAGS     += -g -O${O} -std=gnu99 -MD -MP -Wall -Werror $(shell pkg-config fuse3 --cflags) 
-TARGETS    := kld readsymtbl listlibs stubstest kerntest
+KLDSO_PATH ?= $(realpath ./kld.so)
+KLDSO_SH_PATH ?= $(realpath ./kldso.sh)
+KLDSO_CFLAGS := -O2 -g -DKLDD_SH_PATH=$(KLDSO_SH_PATH) -fno-builtin -fno-stack-protector -nostdlib -MD
+TARGETS    := kld kld.so readsymtbl listlibs stubstest kerntest
 UTHASHREPO := git@github.com:troydhanson/uthash.git
 UTHASHDIR  := ext/uthash
 UTHASHINCS  = ${UTHASHDIR}/include
 
-CFLAGS     += -I${UTHASHINCS} 
+CFLAGS     += -I${UTHASHINCS} -DKLDSO_PATH_DFLT=$(KLDSO_PATH)
 LDFLAGS    += $(shell pkg-config fuse3 --cflags --libs) -lelf
 EXTFILES    = ${UTHASHINCS}/uthash.h
 
@@ -17,6 +20,15 @@ all: ${EXTFILES} ${TARGETS}
 
 kld: ${OBJS}
 	${CC} ${CFLAGS} -o $@ $^ ${LDFLAGS} 
+
+kld.so: kldso_entry.o kldso.o
+	${LD} -g -o $@ $^
+
+kldso_entry.o: kldso_entry.S
+	${AS} -g -o $@ $<
+
+kldso.o: kldso_main.c
+	${CC} ${KLDSO_CFLAGS} -c -o $@ $<
 
 ${UTHASHINCS}/uthash.h:
 	-mkdir -p ext && git clone ${UTHASHREPO} ${UTHASHDIR}
@@ -28,7 +40,7 @@ stubstest: stubtest.c mklibstubs
 	@echo -e "****** To test our approach to symbols run *******\nLD_LIBRARY_PATH=." ./$@
 
 mklibstubs: kldelf.c
-	${CC} -DMAIN $< -o $@ -lelf
+	${CC} ${CFLAGS}  -DMAIN $< -o $@ -lelf 
 
 libkern.so: kld
 	sudo ./kld -k /proc/kallsyms
@@ -61,6 +73,5 @@ distclean: clean
 	-${RM} rf -rf $(wildcard ext)
 
 -include $(wildcard *.d)
-
 
 

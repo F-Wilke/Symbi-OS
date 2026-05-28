@@ -37,6 +37,8 @@ usage(char *name, FILE *fp)
 	  "                      exported kernel runtime symbols\n"
 	  "   -o exe : (build time) patch exe dynsym so kernel symbols\n"
 	  "                      are UNDEF, enabling runtime resolution\n"
+	  "            and set PT_INTERP to %s while storing original\n"
+	  "            interpreter in %s\n"
 	  "   elf    : optional elf file to process as follows:\n"
 	  "              For each libk found in the elf:\n"
 	  "                 find coresponding ko and load it\n"
@@ -46,7 +48,8 @@ usage(char *name, FILE *fp)
 	  "                 extract ko and load\n"
 	  "                 update the libk symbol table with runtime"
 	  " addresses\n",
-	  basename(name), KALLSYMSPATH, LIBKERNPATH_DFLT, KALLSYMSPATH);
+	  basename(name), KALLSYMSPATH, LIBKERNPATH_DFLT, KALLSYMSPATH,
+	  TOSTRING(KLDSO_PATH_DFLT), KOTBL_INTERP_SEC);
 }
 
 struct KLDOPT_DESC {
@@ -117,7 +120,7 @@ openko(char *kofnm, char **kofullpath)
 }
 
 static int
-openso(char *kofnm, char *modnm, char **sofullpath)
+openso(char *kofnm, char *modnm, char **sofullpath, int readonly)
 {
   int fd;
   char *tmp=NULL;
@@ -128,7 +131,11 @@ openso(char *kofnm, char *modnm, char **sofullpath)
     tmp = strdup(kofnm);
     char *dir=dirname(tmp);
     snprintf(fullpath, PATH_MAX, "%s/lib%s.so", dir, modnm);
-    fd = open(fullpath, O_WRONLY | O_CREAT | O_TRUNC, SOPERM_DFLT);
+    if (readonly) {
+      fd = open(fullpath, O_RDONLY);
+    } else {
+      fd = open(fullpath, O_WRONLY | O_CREAT | O_TRUNC, SOPERM_DFLT);
+    }
     if (fd != -1) {
       *sofullpath = strdup(fullpath);
       VPRINT("opened so:%s for ko:%s fd:%d\n", *sofullpath, modnm, fd);
@@ -264,7 +271,8 @@ dumpbo(bo_t *bo)
 }
 
 static int
-addbo(char *kofnm,char *kldopts,char *modnm, bo_t **thebo)
+addbo(char *kofnm,char *kldopts,char *modnm, bo_t **thebo, int readonly,
+      int add_to_hash)
 {
   bo_t        *bo         = NULL;
   kldopts_t    opts       = KLDOPT_NONE;
@@ -326,37 +334,41 @@ addbo(char *kofnm,char *kldopts,char *modnm, bo_t **thebo)
     opts = KLDOPTS_DFLT;
   }
   
-  sofd = openso(kofullpath, modnm, &sofullpath);
+  sofd = openso(kofullpath, modnm, &sofullpath, readonly);
   if (sofd < 0) { rc = -1; goto done; }
   
-  HASH_FIND(hhpath, GBLS.bosbypath, kofullpath, strlen(kofullpath),
-	    bo);
-  
-  if (bo) {
-    if (strcmp(bo->sofnm, sofullpath)!=0) unlink(sofullpath);
-    fprintf(stderr, "WARNING: %s already specified ignoring\n",
-	    kofullpath);
-    rc = -1;
-    goto done;
-  }
+  if (add_to_hash) {
+    HASH_FIND(hhpath, GBLS.bosbypath, kofullpath, strlen(kofullpath),
+	      bo);
+    
+    if (bo) {
+      if (strcmp(bo->sofnm, sofullpath)!=0) unlink(sofullpath);
+      fprintf(stderr, "WARNING: %s already specified ignoring\n",
+	      kofullpath);
+      rc = -1;
+      goto done;
+    }
 
-  HASH_FIND(hhmod, GBLS.bosbymod, modnm, strlen(modnm), bo);
-  if (bo) {
-    unlink(sofullpath); // rm the ignored ko's so
-    fprintf(stderr, "WARNING: %s already specified ignoring\n",
-	   modnm);
-    rc = -1;
-    goto done;
+    HASH_FIND(hhmod, GBLS.bosbymod, modnm, strlen(modnm), bo);
+    if (bo) {
+      unlink(sofullpath); // rm the ignored ko's so
+      fprintf(stderr, "WARNING: %s already specified ignoring\n",
+	     modnm);
+      rc = -1;
+      goto done;
+    }
   }
   
   bo = newbo(kofullpath, modnm, komodnm, (origmodnm!=NULL), opts,
 	     kldopts, kofd, sofullpath, sofd);
   // at this point bo contains all state of memory and fd's
   // cleanup when bo deleted 
-  HASH_ADD_KEYPTR(hhpath, GBLS.bosbypath, bo->kofnm,
-		  strlen(bo->kofnm), bo);
-  HASH_ADD_KEYPTR(hhmod, GBLS.bosbymod, bo->modnm,
-		  strlen(bo->modnm), bo);
+  if (add_to_hash) {
+    HASH_ADD_KEYPTR(hhpath, GBLS.bosbypath, bo->kofnm,
+		    strlen(bo->kofnm), bo);
+    HASH_ADD_KEYPTR(hhmod, GBLS.bosbymod, bo->modnm,
+		    strlen(bo->modnm), bo);
+  }
   
   if (GBLS.verbose>1) {
     VPRINT("Added ob: %d (%d)total obs:\n",
@@ -467,6 +479,11 @@ GBLSInit(int argc, char **argv)
     }
   }
 
+  if (GBLS.verbose == 0) {
+    char *klddebug = getenv("KLD_DEBUG");
+    if (klddebug) GBLS.verbose = 1;
+  }
+  
   if (GBLS.libkernpath==NULL) {
     GBLS.libkernpath = LIBKERNPATH_DFLT;
   }
@@ -489,7 +506,7 @@ GBLSInit(int argc, char **argv)
       rc = -2;
       goto done;
     }
-    if (addbo(kofnm, kldopts, modnm, NULL)<0) {
+    if (addbo(kofnm, kldopts, modnm, NULL, 0, 1)<0) {
       if (kofnm)   free(kofnm);
       if (kldopts) free(kldopts);
       if (modnm)   free(modnm);
@@ -502,7 +519,7 @@ GBLSInit(int argc, char **argv)
 
   if (GBLS.prockallsyms==0 &&
       HASH_CNT(hhpath, GBLS.bosbypath) == 0 &&
-      anum < 1) {
+      anum < 1 && !GBLS.buildexe) {
     fprintf(stderr, "kld: no input files\n");
     rc = -1;
     goto done;
@@ -730,8 +747,11 @@ prcKallsyms(FILE *fp, char **kernpath)
   if (ksyms_i) {
     assert(GBLS.libkernpath);
     writeso(GBLS.libkernpath, -1, kentries, ksyms_i, knmstrlen);
-    if (GBLS.buildexe)
-      kld_undef_elf_dynsym(GBLS.buildexe, kentries, ksyms_i);
+    if (GBLS.buildexe) {
+      const char *ksname = strrchr(GBLS.libkernpath, '/');
+      ksname = ksname ? ksname + 1 : GBLS.libkernpath;
+      kld_undef_elf_dynsym(GBLS.buildexe, ksname, kentries, ksyms_i);
+    }
     *kernpath = realpath(GBLS.libkernpath, NULL);
     cleanupEntries(kentries, ksyms_i);
   }
@@ -741,8 +761,11 @@ prcKallsyms(FILE *fp, char **kernpath)
     HASH_ITER(hh, mhash, mod, tmp) {
       writeso(mod->bo->sofnm, mod->bo->sofd, mod->entries,
 	      mod->syms_i, mod->nmstrlen);
-      if (GBLS.buildexe)
-        kld_undef_elf_dynsym(GBLS.buildexe, mod->entries, mod->syms_i);
+      if (GBLS.buildexe) {
+        const char *msname = strrchr(mod->bo->sofnm, '/');
+        msname = msname ? msname + 1 : mod->bo->sofnm;
+        kld_undef_elf_dynsym(GBLS.buildexe, msname, mod->entries, mod->syms_i);
+      }
       cleanupEntries(mod->entries, mod->syms_i);
       free(mod->name);
       HASH_DEL(mhash, mod);
@@ -813,8 +836,11 @@ prcBO(bo_t *bo)
     goto done;
   }
   writeso(bo->sofnm, bo->sofd, entries, n, nmstrlen);
-  if (GBLS.buildexe)
-    kld_undef_elf_dynsym(GBLS.buildexe, entries, n);
+  if (GBLS.buildexe) {
+    const char *bsname = strrchr(bo->sofnm, '/');
+    bsname = bsname ? bsname + 1 : bo->sofnm;
+    kld_undef_elf_dynsym(GBLS.buildexe, bsname, entries, n);
+  }
   VPRINT("%s: read %zu symbols\n", bo->kofnm, n);
 
  done:
@@ -864,13 +890,114 @@ parsekotbl(char *kotblnxt,  char **kofnm, char **modnm, char **koopts)
   return nn;
 }
 
+static void
+append_ld_dir(const char *sofnm, char ***dirs, int *dirc, int *dirmax)
+{
+  char *tmp = strdup(sofnm);
+  char *dir = dirname(tmp);
+  for (int i = 0; i < *dirc; i++) {
+    if (strcmp((*dirs)[i], dir) == 0) {
+      free(tmp);
+      return;
+    }
+  }
+  if (*dirc == *dirmax) {
+    *dirmax = (*dirmax) ? (*dirmax << 1) : 8;
+    *dirs = realloc(*dirs, *dirmax * sizeof((*dirs)[0]));
+  }
+  (*dirs)[*dirc] = strdup(dir);
+  (*dirc)++;
+  free(tmp);
+}
+
+static char *
+build_ldpath(char **dirs, int dirc)
+{
+  size_t tot = 1;
+  for (int i = 0; i < dirc; i++) tot += strlen(dirs[i]) + 1;
+  char *ldp = calloc(1, tot);
+  if (!ldp) return NULL;
+  for (int i = 0; i < dirc; i++) {
+    strcat(ldp, dirs[i]);
+    if (i + 1 < dirc) strcat(ldp, ":");
+  }
+  return ldp;
+}
+
+static void
+maybe_install_kldso_interp(const char *exe)
+{
+  char interp[PATH_MAX] = {0};
+  if (kld_get_interp(exe, interp, sizeof(interp)) < 0) return;
+  if (strcmp(interp, TOSTRING(KLDSO_PATH_DFLT)) == 0) return;
+
+  kld_add_elf_section(exe, KOTBL_INTERP_SEC, interp, strlen(interp) + 1);
+  if (kld_set_interp(exe, TOSTRING(KLDSO_PATH_DFLT)) < 0) {
+    fprintf(stderr, "WARNING: failed to set interpreter for %s\n", exe);
+  }
+}
+
 static int
-prcExec(const char *exec)
+get_exec_orig_interp(const char *exe, char *buf, size_t bufsz)
+{
+  kld_secdata sd;
+  if (kld_open_elf_secdata(&sd, exe, -1, KOTBL_INTERP_SEC) >= 0) {
+    size_t n = sd.size;
+    if (n >= bufsz) n = bufsz - 1;
+    memcpy(buf, sd.data, n);
+    buf[n] = '\0';
+    kld_close_elf_secdata(&sd, -1);
+    if (buf[0]) return 0;
+  }
+  return kld_get_interp(exe, buf, bufsz);
+}
+
+/* read_file_buf - read an entire file into a malloc'd buffer.
+   Caller must free(*buf) on success. */
+static int
+read_file_buf(const char *path, char **buf, size_t *outsz)
+{
+  FILE *f = fopen(path, "rb");
+  if (!f) {
+    fprintf(stderr, "ERROR: %s: %s\n", path, strerror(errno));
+    return -1;
+  }
+  fseek(f, 0, SEEK_END);
+  long sz = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  if (sz <= 0) { fclose(f); *buf = NULL; *outsz = 0; return 0; }
+  char *b = malloc((size_t)sz + 1);
+  if (!b) { fclose(f); return -1; }
+  if ((long)fread(b, 1, (size_t)sz, f) != sz) {
+    perror(path); fclose(f); free(b); return -1;
+  }
+  fclose(f);
+  b[sz] = '\0';
+  *buf  = b;
+  *outsz = (size_t)sz;
+  return 0;
+}
+
+/*
+ * prcExec - process the .kotbl section embedded in an ELF executable.
+ *
+ * buildtime=0 (runtime): parses kotbl, calls addbo+loadBO to rebuild .so
+ *   files with live kernel addresses.
+ *
+ * buildtime=1 (build-time patch): parses kotbl, derives the path of each
+ *   kld-generated .so, reads its exported symbols, and calls
+ *   kld_undef_elf_dynsym to turn absorbed WEAK-ABS placeholders in exec's
+ *   dynsym into UNDEF entries so ld.so scope-searches at runtime.
+ */
+static int
+prcExec(const char *exec, int buildtime, char **ldpath_out)
 {
   kld_secdata sd;
   int rc = 0;
   bo_t *bo=NULL, **bos=NULL;
   int bosi=0, bosn=0;
+  char **lddirs = NULL;
+  int lddirc = 0, lddirmax = 0;
   rc = kld_open_elf_secdata(&sd, exec, -1, KOTBL_SEC);
   if (rc>=0) {
     VLPRINT(2, "%s:%s mapped\n", exec, KOTBL_SEC);
@@ -886,36 +1013,84 @@ prcExec(const char *exec)
       nn+=n;
       VLPRINT(2, "kotbl[%d]: fnm:%s modnm:%s opts:%s\n", i, fnm,
 	      modnm, opts);
-      if (modnm != NULL && strcmp(modnm, KALLSYMSPATH)==0) {
-	GBLS.libkernpath = fnm;
-      } else {
-	if (addbo(fnm, opts, modnm, &bo) <0) {
-	  assert(0);
-	  rc = -1;
-	  goto done;
-	} else {
-	  if (bosi==bosn) {
-	    bosn = (bosn==0) ? 16 : bosn<<1;
-	    bos  = realloc(bos, sizeof(bos[0])*bosn);
+
+      if (buildtime) {
+	/* build-time: read existing .so, patch exec dynsym */
+	if (modnm && strcmp(modnm, KALLSYMSPATH) == 0) {
+	  const char *soname = strrchr(fnm, '/');
+	  soname = soname ? soname + 1 : fnm;
+	  int sofd = open(fnm, O_RDONLY);
+	  if (sofd < 0) {
+	    VPRINT("WARNING: %s: %s\n", fnm, strerror(errno));
+	  } else {
+	    kld_sym *entries = NULL;
+	    size_t nent = 0, nmstrlen = 0;
+	    if (kld_read_elf_syms(fnm, sofd, &entries, &nent, &nmstrlen) >= 0
+		&& nent > 0)
+	      kld_undef_elf_dynsym(exec, soname, entries, nent);
+	    cleanupEntries(entries, nent);
+	    close(sofd);
 	  }
-	  bos[bosi] = bo;
-	  bosi++;
+	  if (ldpath_out) append_ld_dir(fnm, &lddirs, &lddirc, &lddirmax);
+	  free(fnm); free(modnm); free(opts);
+	} else {
+	  bo_t *bbo = NULL;
+	  if (addbo(fnm, opts, modnm, &bbo, 1, 0) < 0 || !bbo) {
+	    free(fnm); free(modnm); free(opts);
+	    rc = -1;
+	    goto done;
+	  }
+	  if (ldpath_out) append_ld_dir(bbo->sofnm, &lddirs, &lddirc, &lddirmax);
+	  const char *soname = strrchr(bbo->sofnm, '/');
+	  soname = soname ? soname + 1 : bbo->sofnm;
+	  kld_sym *entries = NULL;
+	  size_t nent = 0, nmstrlen = 0;
+	  if (kld_read_elf_syms(bbo->sofnm, bbo->sofd, &entries, &nent, &nmstrlen) >= 0
+	      && nent > 0)
+	    kld_undef_elf_dynsym(exec, soname, entries, nent);
+	  cleanupEntries(entries, nent);
+	  deletebo(bbo);
+	  free(bbo);
+	}
+      } else {
+	/* runtime: collect bo list for loadBO */
+	if (modnm != NULL && strcmp(modnm, KALLSYMSPATH)==0) {
+	  GBLS.libkernpath = fnm;
+	  if (ldpath_out) append_ld_dir(fnm, &lddirs, &lddirc, &lddirmax);
+	} else {
+	  if (addbo(fnm, opts, modnm, &bo, 0, 1) <0) {
+	    assert(0);
+	    rc = -1;
+	    goto done;
+	  } else {
+	    if (ldpath_out) append_ld_dir(bo->sofnm, &lddirs, &lddirc, &lddirmax);
+	    if (bosi==bosn) {
+	      bosn = (bosn==0) ? 16 : bosn<<1;
+	      bos  = realloc(bos, sizeof(bos[0])*bosn);
+	    }
+	    bos[bosi] = bo;
+	    bosi++;
+	  }
 	}
       }
       i++;
     }
     kld_close_elf_secdata(&sd,-1);
-    if (i) GBLS.prockallsyms = 1;
+    if (i && !buildtime) GBLS.prockallsyms = 1;
   }
 
-  
+done:
   for (int i=0; i<bosi; i++) {
     if (loadBO(bos[i])<0) {
       rc = -1;
     }
   }
+  if (ldpath_out) {
+    *ldpath_out = build_ldpath(lddirs, lddirc);
+  }
   if (bos) free(bos);
- done:
+  for (int i = 0; i < lddirc; i++) free(lddirs[i]);
+  if (lddirs) free(lddirs);
   return rc;
 }
 
@@ -930,9 +1105,48 @@ main(int argc, char **argv)
   }
 
   atexit(cleanup);  // from this point on exits will trigger cleanups
-  
+
+  /* true when -o is given with no -k/-K flags: read existing kotbl.bin */
+  int no_kflags = (GBLS.buildexe &&
+                   HASH_CNT(hhpath, GBLS.bosbypath) == 0 &&
+                   !GBLS.prockallsyms);
+
   if (GBLS.executable) {
-    prcExec(GBLS.executable);
+    char *ldpath = NULL;
+    char interp[PATH_MAX] = {0};
+    prcExec(GBLS.executable, 0, &ldpath);
+    if (get_exec_orig_interp(GBLS.executable, interp, sizeof(interp)) == 0) {
+      char *execpath = realpath(GBLS.executable, NULL);
+      const char *ep = execpath ? execpath : GBLS.executable;
+      const char *lp = (ldpath && ldpath[0]) ? ldpath : "";
+      /* Structured output for kldso.sh: interp\0execpath\0ldpath\0 */
+      fwrite(interp, 1, strlen(interp), stdout);
+      fwrite("\0",1, 1, stdout);
+      fwrite(ep, 1, strlen(ep), stdout);
+      fwrite("\0",1, 1, stdout);
+      fwrite(lp, 1, strlen(lp), stdout);
+      fwrite("\0",1, 1, stdout);
+      if (execpath) free(execpath);
+    } else {
+      fprintf(stderr, "ERROR: failed to determine interpreter for %s\n",
+              GBLS.executable);
+    }
+    if (ldpath) free(ldpath);
+  } else if (no_kflags) {
+    /* No-KFLAGS build-time mode:
+       1. embed existing kotbl.bin as .kotbl ELF section
+       2. parse .kotbl, read existing .so symbols, patch dynsym */
+    char *kd  = NULL;
+    size_t ksz = 0;
+    if (read_file_buf(GBLS.kotblfile, &kd, &ksz) < 0 || ksz == 0) {
+      fprintf(stderr, "ERROR: %s: not found or empty; run kcc first\n",
+	      GBLS.kotblfile);
+      EEXIT();
+    }
+    kld_add_elf_section(GBLS.buildexe, KOTBL_SEC, kd, ksz);
+    free(kd);
+    prcExec(GBLS.buildexe, 1, NULL);
+    maybe_install_kldso_interp(GBLS.buildexe);
   } else {
     kotblf = fopen(GBLS.kotblfile, "w");
     if (kotblf == NULL) {
@@ -990,6 +1204,19 @@ main(int argc, char **argv)
   }
 
   if (kotblf) fclose(kotblf);
+
+  /* KFLAGS + buildexe path: embed the newly-written kotbl.bin into the
+     executable as .kotbl section (replaces the separate kldinst step). */
+  if (GBLS.buildexe && !GBLS.executable && !no_kflags) {
+    char *kd  = NULL;
+    size_t ksz = 0;
+    if (read_file_buf(GBLS.kotblfile, &kd, &ksz) >= 0 && ksz > 0) {
+      kld_add_elf_section(GBLS.buildexe, KOTBL_SEC, kd, ksz);
+      free(kd);
+      maybe_install_kldso_interp(GBLS.buildexe);
+    }
+  }
+
   // optionally expose objects via synthetic filesystem
   // This support has not been completed.
   if (GBLS.startfs) {

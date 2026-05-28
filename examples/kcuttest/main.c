@@ -143,7 +143,7 @@ int main(int argc, char **argv) {
   if (argc > 6) num_spawns = atoi(argv[6]);
   if (argc > 7) num_increments = atoi(argv[7]);
   if (argc > 8) stack_df = atoi(argv[8]);
-  if (argc > 9) do_test_interrupt = atoi(argv[10]);
+  if (argc > 9) do_test_interrupt = atoi(argv[9]);
   
   printf("%d: BASIC KCUT TESTS: BEGIN: ssec=%d bloop=%lu yieldcnt=%lu\n", mypid, ssec, bloop, yieldcnt);
 
