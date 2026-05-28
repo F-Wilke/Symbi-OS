@@ -1,11 +1,19 @@
 #ifndef __GLOBALS_H__
 #define __GLOBALS_H__
 
+#define STRINGIFY(x) #x
+#define TOSTRING(x) STRINGIFY(x)
+
+
 #define KOTBL_SEC        ".kotbl"
 #define KOTBL_DFLT       "kotbl.bin"
+#define KOTBL_INTERP_SEC ".interp_orig"
 #define FSNAME_DFLT      "libk"
 #define PATHPREFIX_DFLT  (NULL)
 #define LIBKERNPATH_DFLT "libkern.so"
+#ifndef KLDSO_PATH_DFLT
+#define KLDSO_PATH_DFLT  /lib64/kld.so
+#endif
 #define SOPERM_DFLT      (0644)
 #define KALLSYMSPATH     "/proc/kallsyms"
 enum {
