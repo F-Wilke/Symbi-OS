@@ -1,8 +1,0 @@
-#set -x
-[[ -a /sys/module/ext ]] && sudo rmmod ext
-
-LD_LIBRARY_PATH=~/Symbi-OS/Symlib/dynam_build
-echo $LD_LIBRARY_PATH
-
-[[ -a /sys/module/ext ]] && sudo rmmod ext
-sudo  LD_LIBRARY_PATH=$LD_LIBRARY_PATH ./main_static

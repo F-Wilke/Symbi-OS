@@ -64,6 +64,15 @@ int k_heaptouch(void)
   return sum;
 }
 
+/* user_add — non-static so -rdynamic exports it for dlsym(RTLD_DEFAULT, "user_add"). */
+int user_add(int a, int b)
+{
+  return a + b;
+}
+
+/* user_counter — non-static data symbol referenced from kernel via __user_data__. */
+int user_counter = 0;
+
 int heaptouch(void)
 {
   const int PGSIZE=4096;
@@ -178,7 +187,7 @@ int main(int argc, char **argv) {
   printf("\t\t%d: %lx: IN-KERNEL STACK TOUCH TEST: END: ss=%d\n", mypid, cr3, ss);
 
   printf("\t\t%d: %lx: READ NATIVE KERNEL SYMBOL TEST: START\n", mypid, cr3);
-  printf("\t\toverflowuid: %d\n", overflowuid);
+  printf("\t\t%d: %lx: overflowuid: %d\n", mypid, cr3, overflowuid);
   printf("\t\t%d: %lx: READ NATIVE KERNEL SYMBOL TEST: END\n", mypid, cr3);
 
   printf("\t\t%d: %lx: CALL NATIVE KERNEL SYMBOL TEST: START\n", mypid, cr3);
@@ -192,7 +201,33 @@ int main(int argc, char **argv) {
   printf("\t\t%d: %lx: CALL KERNEL EXTENSION SYMBOL TEST 2: START\n", mypid, cr3);
   int pid = current_pid();
   printf("\t\t%d: %lx: CALL KERNEL EXTENSION SYMBOL TEST 2: END:  current_pid() = %d\n", mypid, cr3, pid);
-  
+
+  printf("\t\t%d: %lx: BACK-LINKAGE TEST: START\n", mypid, cr3);
+  {
+    int bla_sum = kernel_user_add(10, 32);
+    printf("\t\t%d: %lx: BACK-LINKAGE TEST: kernel_user_add(10, 32) = %d (expected 42)\n",
+           mypid, cr3, bla_sum);
+    if (bla_sum != 42)
+      printf("\t\t%d: %lx: BACK-LINKAGE TEST: FAIL — got %d, expected 42\n",
+             mypid, cr3, bla_sum);
+    else
+      printf("\t\t%d: %lx: BACK-LINKAGE TEST: PASS\n", mypid, cr3);
+  }
+  printf("\t\t%d: %lx: BACK-LINKAGE TEST: END\n", mypid, cr3);
+
+  printf("\t\t%d: %lx: BACK-LINKAGE DATA TEST: START\n", mypid, cr3);
+  {
+    user_counter = 5;
+    int before = kernel_user_counter_inc(3);
+    printf("\t\t%d: %lx: BACK-LINKAGE DATA TEST: before=%d user_counter=%d (expected 5, 8)\n",
+           mypid, cr3, before, user_counter);
+    if (before != 5 || user_counter != 8)
+      printf("\t\t%d: %lx: BACK-LINKAGE DATA TEST: FAIL\n", mypid, cr3);
+    else
+      printf("\t\t%d: %lx: BACK-LINKAGE DATA TEST: PASS\n", mypid, cr3);
+  }
+  printf("\t\t%d: %lx: BACK-LINKAGE DATA TEST: END\n", mypid, cr3);
+
   printf("\t\t%d: %lx: USER YIELD TEST: START: yielding for %lu times\n", mypid, cr3, yieldcnt);
   for (int i=0; i<yieldcnt; i++) { sched_yield(); }
   printf("\t\t%d: %lx: USER YIELD TEST: END: we are back for yields\n", mypid, cr3);

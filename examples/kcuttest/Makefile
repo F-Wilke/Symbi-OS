@@ -7,7 +7,9 @@ KFLAGS  = -K ../kcutidt -K ../kcutef -K ../kcutevac -k kcutidt.ko -k kcutef.ko -
 TARGET  := kcuttest
 KTARGET := kcuttest.ko 
 LIBS := -lc  ../../Symlib/build/L1/L1.a -L. -L ../kcutevac -l kcutevac -lkcuttest -lkern
-LDFLAGS := -pie ${LIBS}
+# -rdynamic exports executable symbols so dlsym(RTLD_DEFAULT, "user_add") works.
+# applink.o is linked directly (not via -lapp) to guarantee the constructor runs.
+LDFLAGS := -pie -rdynamic ${LIBS}
 
 .PHONY: all clean
 
@@ -20,13 +22,13 @@ all: ${KTARGET} $(TARGET)
 ${KTARGET}: $(wildcard *.kc *.kh *.kS)
 	 ../tools/kcc -o $@  ${KFLAGS}
 
-${TARGET}:  main.o mmap_stack_test.o 
+${TARGET}:  main.o mmap_stack_test.o applink.o
 	$(CC) $(CFLAGS) -o $@ $^ ${LDFLAGS}
 	../tools/src/kld/kld -o $@
 
 -include *.d
 
 clean:
-	rm -rf $(wildcard $(TARGET) $(KTARGET) *.o *.so *.d kotbl.bin Module.symvers .ext)
+	rm -rf $(wildcard $(TARGET) $(KTARGET) *.o *.so *.d kotbl.bin Module.symvers .ext applink.o app.h)
 
 

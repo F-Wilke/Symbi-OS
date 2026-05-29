@@ -4,3 +4,4 @@ extension.h
 *.so
 *.o
 .ext/*
+kcuttest
