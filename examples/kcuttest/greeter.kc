@@ -1,5 +1,7 @@
 #include <linux/pid.h>
+#include <linux/module.h>
 #include <greeter.kh>
+#include "app.h"
 
 //some example functions
 int current_pid(void) {
@@ -13,3 +15,42 @@ int kernel_add(int a, int b) {
 	pr_info("kernel_add: %d + %d = %d\n", a, b, a + b);
 }
 EXPORT_SYMBOL(kernel_add);
+
+/*
+ * kernel_user_add — back-linkage example.
+ *
+ * Calls user_add() from kernel context.  user_add() is a user-space function
+ * whose address is resolved at process startup by the applink constructor
+ * (via __kld_resolve_app_syms_kcuttest) into the __user_sym__user_add slot.
+ *
+ * Must be called while elevated (sym_elevate() active) so that SMAP/SMEP
+ * are disabled and the user-space address in __user_sym__user_add is safe
+ * to call and access.
+ */
+int kernel_user_add(int a, int b) {
+	int res;
+	pr_info("kernel_user_add: __user_sym__user_add slot = %p\n",
+		__user_sym__user_add);
+	res = user_add(a, b);
+	pr_info("kernel_user_add: %d + %d = %d\n", a, b, res);
+	return res;
+}
+EXPORT_SYMBOL(kernel_user_add);
+
+/*
+ * kernel_user_counter_inc — back-linkage data symbol example.
+ *
+ * Reads and increments user_counter, a user-space int whose address was
+ * resolved at startup into the __user_sym__user_counter slot.
+ * The user_counter macro (from app.h) dereferences that slot as an int*.
+ * Must be called while elevated (sym_elevate() active).
+ */
+int kernel_user_counter_inc(int amount) {
+	int before = user_counter;
+	pr_info("kernel_user_counter_inc: slot=%p before=%d amount=%d\n",
+		__user_sym__user_counter, before, amount);
+	user_counter += amount;
+	pr_info("kernel_user_counter_inc: after=%d\n", user_counter);
+	return before;
+}
+EXPORT_SYMBOL(kernel_user_counter_inc);

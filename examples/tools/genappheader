@@ -1,219 +1,245 @@
 #!/usr/bin/python3
-# used google AI develop base clang logic to generate ext.h
-# extended to generate ext.c 
+"""
+genappheader — generate kernel-side app.h and app_init.h from app.kh
 
-import clang.cindex
+Usage: genappheader <app.h> <app_init.h> <app.kh>
+
+Parses declarations tagged with __user_fn__ or __user_data__ in app.kh:
+
+  __user_fn__   int user_add(int a, int b);
+  __user_fn__   void user_printf(const char *fmt, ...);   # variadic -> #define
+  __user_data__ int user_counter;
+  __user_data__ struct my_stats user_stats;
+
+Generates:
+  app.h      — extern slot declarations + typed call wrappers (kernel-side)
+  app_init.h — void* slot definitions, include ONCE from init.c
+"""
+
 import sys
+import re
 import os
 
-# --- (Optional) Manual configuration if libclang is not found automatically ---
-# clang.cindex.Config.set_library_file('/usr/lib/llvm-14/lib/libclang.so') 
 
-def get_function_prototype_ifunc(cursor):
-    """Extracts the full function prototype string for a declaration."""
-    return_type = cursor.result_type.spelling
-    func_name = cursor.spelling
-    params = []
-    for child in cursor.get_children():
-        if child.kind == clang.cindex.CursorKind.PARM_DECL:
-            param_type = child.type.spelling
-            param_name = child.spelling
-            params.append(f"{param_type} {param_name}")
-    
-    params_str = ', '.join(params) if params else 'void'
-    return func_name, f"extern {return_type} {func_name}({params_str});", f"DECLARE_IFUNC({func_name}, {return_type}, ({params_str}))", f"    void* {func_name};", f"DEFINE_GOT_FUNC({func_name}, {return_type}, ({params_str}))"
+# --------------------------------------------------------------------------- #
+# Parsing helpers
+# --------------------------------------------------------------------------- #
 
-def get_global_variable_declaration(cursor):
-    """Extracts the declaration string for a global variable."""
-    var_name = cursor.spelling
-    var_type = cursor.type.spelling
-    return f"extern {var_type} {var_name};"
+def _split_type_name(s):
+    """Split 'int *get_ptr' or 'struct foo bar' into (type, name).
 
-def process_app_files(app_header_filename):
+    Leading '*' characters are moved from the name token to the type.
     """
-    Processes multiple C files and aggregates function prototypes and GOT declarations.
+    s = s.strip()
+    tokens = s.rsplit(None, 1)
+    if len(tokens) != 2:
+        return '', s
+    type_part, name_part = tokens
+    while name_part.startswith('*'):
+        type_part += '*'
+        name_part = name_part[1:]
+    return type_part.strip(), name_part.strip()
+
+
+def _parse_params(params_str):
+    """Parse a parameter list string.
+
+    Returns (typed_params, arg_names, is_variadic) where:
+      typed_params — list of 'type name' strings (e.g. ['int a', 'int b'])
+      arg_names    — list of bare argument names (e.g. ['a', 'b'])
+      is_variadic  — True if '...' was present
     """
-    index = clang.cindex.Index.create()
-    all_function_prototypes = set() # Use a set to avoid duplicate declarations
-    got_declarations = set()
-    function_definitions = set()
-    got_derefs = set()
-    func_names = set()
+    params_str = params_str.strip()
+    if not params_str or params_str == 'void':
+        return [], [], False
 
-    print(f"Parsing {app_header_filename}...")
-    tu = index.parse(app_header_filename, args=['-std=c99'])
-    
-    if not tu:
-        print(f"Error: Unable to parse translation unit for {app_header_filename}. Skipping.")
-        return
+    parts = [p.strip() for p in params_str.split(',')]
+    is_variadic = '...' in parts
+    parts = [p for p in parts if p != '...']
 
-    for cursor in tu.cursor.get_children():
-        # Only consider declarations belonging to the current source file being parsed
-        if cursor.location.file and os.path.abspath(cursor.location.file.name) != os.path.abspath(app_header_filename):
-            continue
+    typed = []
+    names = []
+    for i, p in enumerate(parts):
+        type_part, name_part = _split_type_name(p)
+        if not name_part:
+            # Unnamed param — generate a placeholder
+            type_part = p.strip()
+            name_part = f'_p{i}'
+        typed.append(f'{type_part} {name_part}')
+        names.append(name_part)
 
-        #dont include static ones
-        if cursor.linkage == clang.cindex.LinkageKind.INTERNAL:
-            continue
+    return typed, names, is_variadic
 
 
-        if cursor.kind == clang.cindex.CursorKind.FUNCTION_DECL:
-            func_name, prototype, _, got_declaration, function_definition = get_function_prototype_ifunc(cursor)
-            if func_name == "main":
-                continue  # Skip main function
-            func_names.add(func_name)
+def _type_only(typed_params):
+    """Strip parameter names, keeping only types for function-pointer casts."""
+    result = []
+    for p in typed_params:
+        t, _ = _split_type_name(p)
+        result.append(t if t else p)
+    return result
 
 
-            if prototype:
-                all_function_prototypes.add(prototype)
-            if got_declaration:
-                got_declarations.add(got_declaration)
-            if function_definition:
-                function_definitions.add(function_definition)
-                
-        elif cursor.kind == clang.cindex.CursorKind.VAR_DECL:
-            continue # We can not link to global variables from the application because of the kernels memory model (32 bit relative addressing)
+# --------------------------------------------------------------------------- #
+# Parser
+# --------------------------------------------------------------------------- #
+
+# Matches: __user_fn__ <rettype+name> ( <params> ) ;
+_FN_PAT = re.compile(r'__user_fn__\s+(.+\b)\s*\(([^)]*)\)\s*;')
+
+# Matches: __user_data__ <type+name> ;
+_DATA_PAT = re.compile(r'__user_data__\s+(.+?)\s*;')
 
 
-    return sorted(list(all_function_prototypes)), sorted(list(got_declarations)), sorted(list(function_definitions)), sorted(list(func_names))
+def parse_kh(kh_path):
+    """Parse app.kh and return a list of symbol descriptors."""
+    symbols = []
+
+    with open(kh_path) as f:
+        for line in f:
+            stripped = line.strip()
+            if not stripped or stripped.startswith('//') or stripped.startswith('#'):
+                continue
+
+            m = _FN_PAT.search(stripped)
+            if m:
+                rettype, fname = _split_type_name(m.group(1))
+                typed_params, arg_names, is_variadic = _parse_params(m.group(2))
+                symbols.append({
+                    'kind': 'fn',
+                    'name': fname,
+                    'rettype': rettype,
+                    'typed_params': typed_params,
+                    'arg_names': arg_names,
+                    'is_variadic': is_variadic,
+                    'original': stripped,
+                })
+                continue
+
+            m = _DATA_PAT.search(stripped)
+            if m:
+                dtype, dname = _split_type_name(m.group(1))
+                symbols.append({
+                    'kind': 'data',
+                    'name': dname,
+                    'dtype': dtype,
+                    'original': stripped,
+                })
+
+    return symbols
 
 
+# --------------------------------------------------------------------------- #
+# Code generators
+# --------------------------------------------------------------------------- #
 
-
-def write_app_files(user_header_filename, kernel_header_filename, func_protos, got_declarations, function_definitions, func_names):
-    """Writes the app file with function prototypes and GOT declarations."""
-    include_guard = os.path.basename(kernel_header_filename).replace('.', '_').upper() + "_" + "EXT_"
-    kernel_header_content = [
-        f"#ifndef {include_guard}",
-        f"#define {include_guard}",
-        # "",
-        # "#include \"app_orig.h\"",
-        "",
-        "#ifdef __cplusplus",
-        "extern \"C\" {",
-        "#endif",
-        ""]
-    if not got_declarations:
-        got_declarations.append("void* dummy; // No GOT entries found, dummy entry to avoid empty struct")
-        kernel_header_content.append("#define NO_APP_GOT_ENTRIES")
-
-
-    if got_declarations:
-        kernel_header_content.append("typedef struct {")
-        kernel_header_content.append("// GOT Declarations")
-        kernel_header_content.extend(got_declarations)
-        kernel_header_content.append("} app_got_t;")
-        kernel_header_content.append("")
-    
-    kernel_header_content.extend([
-        "extern app_got_t* app_got; // this is defined in init.c generated by kcc",
-        "",
-        "#define DEFINE_GOT_FUNC(func_name, rettype, args) \\",
-        "static inline rettype func_name args { \\",
-        "asm volatile ( \\",
-        "   \"jmp *%0\" \\",
-        "   : \\",
-        "   : \"r\"(app_got->func_name) \\",
-        "   ); \\",
-        "   unreachable(); \\",
-        "}",
-        "",
-    ])
-
-    if function_definitions:
-        kernel_header_content.append("")
-        kernel_header_content.append("// Function Definitions")
-        kernel_header_content.extend(function_definitions)
-    
-
-    kernel_header_content.extend([
-        "#ifdef __cplusplus",
-        "}",
-        "#endif",
-        "",
-        f"#endif // {include_guard}"
-    ])
-
-
-    
-    include_guard = os.path.basename(user_header_filename).replace('.', '_').upper() + "_" + "EXT_"
-    user_header_content = [
-        f"#ifndef {include_guard}",
-        f"#define {include_guard}",
-        "",
-        "#include \"app_orig.h\"",
-        "",
-        "#ifdef __cplusplus",
-        "extern \"C\" {",
-        "#endif",
-        "",
-        "#define SET_APP_GOT_FUNC(func_name) \\",
-        "    app_got->func_name = (void *)&func_name;",
-        ""
+def generate_app_h(symbols, kh_path):
+    """Generate kernel-side app.h."""
+    guard = 'APP_H_EXT_'
+    lines = [
+        '/* Generated by genappheader — DO NOT EDIT */',
+        f'/* Source: {os.path.basename(kh_path)} */',
+        f'#ifndef {guard}',
+        f'#define {guard}',
+        '',
+        '#include <linux/kernel.h>',
+        '',
     ]
 
+    if not symbols:
+        lines.append(f'#endif /* {guard} */')
+        return '\n'.join(lines) + '\n'
 
-    if got_declarations:
-        user_header_content.append("typedef struct {")
-        user_header_content.append("// GOT Declarations")
-        user_header_content.extend(got_declarations)
-        user_header_content.append("} app_got_t;")
-        user_header_content.append("")
+    # One extern declaration per slot
+    lines.append('/* User-symbol pointer slots — defined once in app_init.h (included by init.c) */')
+    for sym in symbols:
+        lines.append(f'extern void *__user_sym__{sym["name"]};')
+    lines.append('')
 
-        
+    # Typed call wrappers
+    lines.append('/* Kernel-side call wrappers */')
+    for sym in symbols:
+        lines.append(f'/* {sym["original"]} */')
+        name = sym['name']
 
-    if func_protos:
-        user_header_content.append("")
-        # user_header_content.append("#ifdef DECLARE_ALL_FUNCS")
-        user_header_content.append("// Function Prototypes")
-        user_header_content.extend(func_protos)
+        if sym['kind'] == 'fn':
+            rettype = sym['rettype']
+            typed_params = sym['typed_params']
+            arg_names = sym['arg_names']
+            is_variadic = sym['is_variadic']
 
-        user_header_content.append("")
-        user_header_content.append("//Set GOT logic")
-        user_header_content.append("#define SET_ALL_GOT_ENTRIES() \\")
+            if is_variadic:
+                # Variadic: emit a #define macro
+                fixed_types = _type_only(typed_params)
+                fixed_str = (', '.join(fixed_types) + ', ...') if fixed_types else '...'
+                lines.append(
+                    f'#define {name}(...) '
+                    f'(({rettype}(*)({fixed_str}))__user_sym__{name})(__VA_ARGS__)'
+                )
+            else:
+                # Non-variadic: static inline wrapper
+                param_types = _type_only(typed_params)
+                fn_ptr = f'{rettype}(*)({", ".join(param_types) if param_types else "void"})'
+                param_decl = ', '.join(typed_params) if typed_params else 'void'
+                call_args = ', '.join(arg_names)
+                ret_kw = 'return ' if rettype != 'void' else ''
+                lines.append(f'static inline {rettype} {name}({param_decl})')
+                lines.append('{')
+                lines.append(f'    {ret_kw}(({fn_ptr})__user_sym__{name})({call_args});')
+                lines.append('}')
 
-        for func_name in func_names:
-            user_header_content.append(f"SET_APP_GOT_FUNC({func_name}); \\")
-        
-        user_header_content.append("")
-        # user_header_content.append("#endif")
-        user_header_content.append("")
-    
+        else:  # data
+            dtype = sym['dtype']
+            lines.append(f'#define {name} (*({dtype} *)__user_sym__{name})')
+
+        lines.append('')
+
+    lines.append(f'#endif /* {guard} */')
+    return '\n'.join(lines) + '\n'
+
+
+def generate_app_init_h(symbols, kh_path):
+    """Generate app_init.h — slot definitions for inclusion in init.c."""
+    lines = [
+        '/* Generated by genappheader — DO NOT EDIT */',
+        f'/* Source: {os.path.basename(kh_path)} */',
+        '/* Include ONCE from init.c to define the __user_sym__ pointer slots */',
+        '',
+    ]
+
+    if not symbols:
+        lines.append('/* No user symbols declared */')
     else:
-        # noop macro
-        user_header_content.append("#define SET_ALL_GOT_ENTRIES() // No functions found, no GOT entries to set")
+        for sym in symbols:
+            lines.append(f'void *__user_sym__{sym["name"]} = NULL;')
 
-    user_header_content.extend([
-        "#ifdef __cplusplus",
-        "}",
-        "#endif",
-        "",
-        f"#endif // {include_guard}"
-    ])
-
-    with open(user_header_filename, 'w+') as f:
-        f.write('\n'.join(user_header_content))
-
-    with open(kernel_header_filename, 'w+') as f:
-        f.write('\n'.join(kernel_header_content))
-
-        
-    print(f"\nSuccessfully generated: {user_header_filename}")
+    return '\n'.join(lines) + '\n'
 
 
+# --------------------------------------------------------------------------- #
+# Entry point
+# --------------------------------------------------------------------------- #
 
-if __name__ == "__main__":
-    # sys.argv[0] is the script name, sys.argv[1:] is the list of source files
-
-    if len(sys.argv) < 4:
-        print(f"Usage: {sys.argv[0]} <kernel_output.h> <user_output.h> <input.kh>")
+if __name__ == '__main__':
+    if len(sys.argv) != 4:
+        print(f'Usage: {sys.argv[0]} <app.h> <app_init.h> <app.kh>', file=sys.stderr)
         sys.exit(1)
-    
-    kernel_output_header_name = sys.argv[1]
-    user_output_header_name = sys.argv[2]
-    input_header_name = sys.argv[3]
-    
-    
-    app_functions_list, got_declarations, function_definitions, func_names = process_app_files(input_header_name)
-    write_app_files(user_output_header_name,kernel_output_header_name, app_functions_list, got_declarations, function_definitions, func_names)
 
+    app_h_path     = sys.argv[1]
+    app_init_h_path = sys.argv[2]
+    kh_path        = sys.argv[3]
+
+    if not os.path.exists(kh_path):
+        print(f'Error: {kh_path} not found', file=sys.stderr)
+        sys.exit(1)
+
+    symbols = parse_kh(kh_path)
+
+    with open(app_h_path, 'w') as f:
+        f.write(generate_app_h(symbols, kh_path))
+
+    with open(app_init_h_path, 'w') as f:
+        f.write(generate_app_init_h(symbols, kh_path))
+
+    print(f'Generated {app_h_path} ({len(symbols)} symbol(s))')
+    print(f'Generated {app_init_h_path}')
