@@ -20,7 +20,7 @@ all: ${KTARGET} $(TARGET)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 ${KTARGET} app.h applink.o: $(wildcard *.kc *.kh *.kS)
-	 ../tools/kcc -o $@  ${KFLAGS}
+	 ../tools/kcc -o ${KTARGET} ${KFLAGS}
 
 ${TARGET}:  main.o mmap_stack_test.o applink.o
 	$(CC) $(CFLAGS) -o $@ $^ ${LDFLAGS}

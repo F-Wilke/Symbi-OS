@@ -337,6 +337,7 @@ kld_update_elf_dynsym(const char *path, const kld_sym *entries, size_t n)
     }
 
     Elf_Scn *scn = NULL;
+    int total_updated = 0;
     while ((scn = elf_nextscn(elf, scn)) != NULL) {
         GElf_Shdr shdr;
         gelf_getshdr(scn, &shdr);
@@ -364,8 +365,10 @@ kld_update_elf_dynsym(const char *path, const kld_sym *entries, size_t n)
             gelf_update_sym(data, (int)i, &sym);
             updated = 1;
         }
-        if (updated)
+        if (updated) {
             elf_flagdata(data, ELF_C_SET, ELF_F_DIRTY);
+            total_updated++;
+        }
     }
 
     if (elf_update(elf, ELF_C_WRITE) < 0) {
@@ -373,6 +376,10 @@ kld_update_elf_dynsym(const char *path, const kld_sym *entries, size_t n)
                 elf_errmsg(-1));
         rc = -1;
     }
+    /* n > 0 but no dynsym entries matched — signal failure so the caller
+     * can fall back to writeso() and rebuild the .so from scratch. */
+    if (rc == 0 && n > 0 && total_updated == 0)
+        rc = -1;
     elf_end(elf);
 done:
     free(sorted);
