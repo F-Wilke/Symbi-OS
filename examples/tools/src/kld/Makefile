@@ -1,11 +1,11 @@
-SRCS       := main.c kldfs.c fs.c sigproc.c kldelf.c modinfo.c loadbo.c
-OBJS       := $(SRCS:%.c=%.o)
+KLD_SRCS   := main.c kldfs.c fs.c sigproc.c kldelf.c modinfo.c loadbo.c
+KLD_OBJS   := $(KLD_SRCS:%.c=%.o)
 O          := 0
 CFLAGS     += -g -O${O} -std=gnu99 -MD -MP -Wall -Werror $(shell pkg-config fuse3 --cflags) 
-KLDSO_PATH ?= $(realpath ./kld.so)
-KLDSO_SH_PATH ?= $(realpath ./kldso.sh)
+KLDSO_SH_PATH ?= $(realpath .)/kldso.sh
+KLDSO_PATH ?= $(realpath .)/kld.so
 KLDSO_CFLAGS := -O2 -g -DKLDD_SH_PATH=$(KLDSO_SH_PATH) -fno-builtin -fno-stack-protector -nostdlib -MD
-TARGETS    := kld kld.so readsymtbl listlibs stubstest kerntest
+TARGETS    := kld.so kld readsymtbl listlibs stubstest kerntest
 UTHASHREPO := git@github.com:troydhanson/uthash.git
 UTHASHDIR  := ext/uthash
 UTHASHINCS  = ${UTHASHDIR}/include
@@ -18,8 +18,9 @@ EXTFILES    = ${UTHASHINCS}/uthash.h
 
 all: ${EXTFILES} ${TARGETS} 
 
-kld: ${OBJS}
-	${CC} ${CFLAGS} -o $@ $^ ${LDFLAGS} 
+
+kld: kld.so ${KLD_OBJS}
+	${CC} ${CFLAGS} -o $@ ${KLD_OBJS} ${LDFLAGS} 
 
 kld.so: kldso_entry.o kldso.o
 	${LD} -g -o $@ $^

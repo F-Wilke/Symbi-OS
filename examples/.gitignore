@@ -6,3 +6,4 @@ libextension.a
 *Module.symvers
 copilot/
 *.d
+app.h

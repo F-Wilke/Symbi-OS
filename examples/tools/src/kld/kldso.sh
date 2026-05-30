@@ -15,19 +15,21 @@ shift
 script_dir=$(dirname "$(realpath "$0")")
 kld_bin="${script_dir}/kld"
 
-# Start kld as a coprocess so that we can reliably get its
-# exist status along with its output
-coproc KLDPROC { "$kld_bin" "$prog"; }
+# Run kld and open its stdout as a readable FD.  Using exec+process-substitution
+# rather than coproc avoids the race where bash unsets KLDPROC[] (and closes the
+# FD) between the coproc line and the capture of KLDPROC[0].
+exec {kld_fd}< <("$kld_bin" "$prog")
+kld_pid=$!
 
-# Read NUL-separated fields from coprocess stdout
-IFS= read -r -d '' interp   <&"${KLDPROC[0]}" || true
-IFS= read -r -d '' execpath <&"${KLDPROC[0]}" || true
-IFS= read -r -d '' ldpath   <&"${KLDPROC[0]}" || true
+# Read NUL-separated fields from kld stdout
+IFS= read -r -d '' interp   <&"$kld_fd" || true
+IFS= read -r -d '' execpath <&"$kld_fd" || true
+IFS= read -r -d '' ldpath   <&"$kld_fd" || true
 
-# Close read FD and wait for producer exit status
-exec {KLDPROC[0]}<&-
+# Close read FD and collect kld exit status
+exec {kld_fd}<&-
 
-if ! wait "${KLDPROC_PID}"; then
+if ! wait "$kld_pid"; then
     kld_rc=$?
     echo "ERROR: kld ($kld_bin) failed rc=$kld_rc" >&2
     exit "$kld_rc"

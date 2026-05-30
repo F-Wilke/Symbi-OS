@@ -5,3 +5,4 @@ extension.h
 *.o
 .ext/*
 kcuttest
+app.h

@@ -123,6 +123,7 @@ for m in ${mods[@]}; do
     [[ ! -a $tmpdir/$(basename $m) ]] && ln -s $m $tmpdir/$(basename $m)
 done
 
+has_app_kh=0
 declare -a cfiles
 declare -a asmfiles
 
@@ -136,6 +137,7 @@ for s in ${src[@]}; do
     # genappheader then generates app.h (extern decls + wrappers) and app_init.h (slot definitions).
     if [[ $s == *app.kh ]]; then
 	[[ ! -a $tmpdir/app_orig.h ]] && ln -s $s $tmpdir/app_orig.h
+	has_app_kh=1
 	continue
     fi
 
@@ -152,36 +154,56 @@ for s in ${src[@]}; do
     [[ ! -a $tmpdir/$t ]] && ln -s $s $tmpdir/$t
 done
 
-# Ensure app_orig.h exists so the .ext/Makefile can always build app.h / app_init.h.
-# If no app.kh was provided, create an empty placeholder (genappheader handles 0 symbols).
-[[ ! -f "$tmpdir/app_orig.h" ]] && echo "/* no app.kh */" > "$tmpdir/app_orig.h"
+# When no app.kh is provided, remove stale back-linkage artefacts from prior
+# builds so they cannot silently influence the current build.  Also warn if any
+# source still includes "app.h" — it will fail to compile without an app.kh.
+if (( ! has_app_kh )); then
+    for s in "${src[@]}"; do
+        [[ $s =~ \.kc$ ]] || continue
+        grep -qF '#include "app.h"' "$s" 2>/dev/null && \
+            echo "kcc: warning: $(basename $s) includes \"app.h\" but no app.kh was provided" >&2
+    done
+    rm -f "$tmpdir/app_orig.h" "$tmpdir/app.h" "$tmpdir/app_init.h" "$tmpdir/applink.c"
+    rm -f "$curdir/app.h" "$curdir/applink.o"
+fi
 
-# Parse app_orig.h to get user symbol names in declaration order.
-# Used to generate both the init.c resolver (direct assignments) and the applink.c
-# dlsym calls.  Both files must agree on symbol ordering — guaranteed since both
-# are generated from the same parsed list in the same kcc run.
+# Parse app_orig.h and build resolver body — only when app.kh was provided.
 declare -a user_syms
-while IFS= read -r line; do
-    [[ "$line" =~ ^[[:space:]]*(//|#) ]] && continue
-    if [[ "$line" =~ __user_fn__.*[[:space:]\*]([a-zA-Z_][a-zA-Z0-9_]*)[[:space:]]*\( ]]; then
-        user_syms+=("${BASH_REMATCH[1]}")
-    elif [[ "$line" =~ __user_data__.*[[:space:]\*]([a-zA-Z_][a-zA-Z0-9_]*)[[:space:]]*\; ]]; then
-        user_syms+=("${BASH_REMATCH[1]}")
-    fi
-done < "$tmpdir/app_orig.h"
-
-# Build the resolver body: one direct slot assignment per user symbol.
-# No kallsyms walk and no dlsym from ring 0 needed.
 resolver_body=""
-for i in "${!user_syms[@]}"; do
-    resolver_body="${resolver_body}    if (count > $i) __user_sym__${user_syms[$i]} = addrs[$i];\n"
-done
+if (( has_app_kh )); then
+    # Parse app_orig.h to get user symbol names in declaration order.
+    # Both init.c and applink.c are generated from the same list in the same
+    # kcc run, so they always agree on symbol names.
+    while IFS= read -r line; do
+        [[ "$line" =~ ^[[:space:]]*(//|#) ]] && continue
+        if [[ "$line" =~ __user_fn__.*[[:space:]\*]([a-zA-Z_][a-zA-Z0-9_]*)[[:space:]]*\( ]]; then
+            user_syms+=("${BASH_REMATCH[1]}")
+        elif [[ "$line" =~ __user_data__.*[[:space:]\*]([a-zA-Z_][a-zA-Z0-9_]*)[[:space:]]*\; ]]; then
+            user_syms+=("${BASH_REMATCH[1]}")
+        fi
+    done < "$tmpdir/app_orig.h"
 
-[[ ! -a $tmpdir/init.c ]] && {
-    cat > $tmpdir/init.c <<EOF
+    # Build the resolver body: one name-matched assignment per user symbol.
+    # Order of symbols in app.kh does not matter — eliminates positional coupling.
+    for sym in "${user_syms[@]}"; do
+        resolver_body="${resolver_body}        if (strcmp(names[i], \"${sym}\") == 0) __user_sym__${sym} = addrs[i];\n"
+    done
+fi
+
+# Always regenerate init.c so changes to app.kh are picked up on every run.
+cat > $tmpdir/init.c <<EOF
 #include <linux/module.h>
+EOF
+
+if (( has_app_kh )); then
+    cat >> $tmpdir/init.c <<EOF
+#include <linux/string.h>
 #include "app.h"
 #include "app_init.h"
+EOF
+fi
+
+cat >> $tmpdir/init.c <<EOF
 
 //  Define the module metadata.
 #define MODULE_NAME "$name"
@@ -211,25 +233,36 @@ static void __exit ext_exit(void)
     pr_info("%s: module unloaded from 0x%p\n", MODULE_NAME, extension_exit);
     if (&extension_exit != NULL) extension_exit();	    
 }
+EOF
+
+if (( has_app_kh )); then
+    cat >> $tmpdir/init.c <<EOF
 
 /*
  * __kld_resolve_app_syms_${name} — called by the user-space applink constructor.
  *
- * Receives pre-resolved user-space symbol addresses (obtained via dlsym at ring 3)
- * and assigns them directly to the corresponding __user_sym__* slots.
+ * Receives the user symbol name array and pre-resolved addresses (obtained via
+ * dlsym at ring 3) and assigns each address to the matching __user_sym__* slot
+ * by name.  Order of names[] / addrs[] does not need to match app.kh order.
  * Must be called from elevated context (sym_elevate() active) since the slots
- * reside in kernel memory.  Symbol order matches app.kh / applink.c.
+ * reside in kernel memory.
  */
-void __kld_resolve_app_syms_${name}(void **addrs, int count);
-void __kld_resolve_app_syms_${name}(void **addrs, int count)
+void __kld_resolve_app_syms_${name}(const char * const *names, void **addrs, int count);
+void __kld_resolve_app_syms_${name}(const char * const *names, void **addrs, int count)
 {
-$(printf "%b" "$resolver_body")}
+    int i;
+    for (i = 0; i < count; i++) {
+$(printf "%b" "$resolver_body")    }
+}
 EXPORT_SYMBOL(__kld_resolve_app_syms_${name});
+EOF
+fi
+
+cat >> $tmpdir/init.c <<EOF
 
 module_init(ext_init);
 module_exit(ext_exit);
 EOF
-}
 
 # Process dependent modules and build KBUILD_EXTRA_SYMBOLS
 declare -a kbuild_symvers
@@ -272,6 +305,13 @@ fi
 
 [[ -n $kbuild_extra_symbols ]] && kbuild_extra_symbols="KBUILD_EXTRA_SYMBOLS := ${kbuild_extra_symbols}"
 
+# Set Makefile all-target list based on whether app.kh was provided.
+if (( has_app_kh )); then
+    _makefile_all_targets="app.h app_init.h ${name}.ko"
+else
+    _makefile_all_targets="${name}.ko"
+fi
+
 cat > $tmpdir/Makefile <<EOF
 obj-m += ${name}.o
 ${name}-y := \$(patsubst %.c,%.o,${cfiles[@]}) \$(patsubst %.S,%.o,${asmfiles[@]}) init.o
@@ -283,21 +323,13 @@ KO_FILES := ${name}.ko
 
 .PHONY: all clean ${name}.ko
 
-all: app.h app_init.h ${name}.ko
+all: ${_makefile_all_targets}
 
 %.kbin: %.ko
 	ld -r -b binary -z noexecstack -o \$@ \$<
 
 ${name}.ko: ${cfiles[@]}
 	make -C ${LINUX_BUILD_PATH} M=${tmpdir} modules
-
-# genappheader generates both app.h and app_init.h from app_orig.h (symlink to app.kh)
-app.h: app_orig.h
-	$scriptdir/genappheader app.h app_init.h app_orig.h
-
-# app_init.h is a side-effect of building app.h
-app_init.h: app.h
-	@:
 
 modules.h: ${name}.ko
 	$scriptdir/genmodsheader -o modules.h \$(wildcard *.ko)
@@ -308,6 +340,19 @@ clean:
 
 EOF
 
+if (( has_app_kh )); then
+    cat >> $tmpdir/Makefile <<EOF
+# genappheader generates both app.h and app_init.h from app_orig.h (symlink to app.kh)
+app.h: app_orig.h
+	$scriptdir/genappheader app.h app_init.h app_orig.h
+
+# app_init.h is a side-effect of building app.h
+app_init.h: app.h
+	@:
+
+EOF
+fi
+
 make -C $tmpdir
 
 (( $? )) && {
@@ -317,7 +362,7 @@ make -C $tmpdir
 
 rtdir=$(realpath --relative-to=$PWD $tmpdir)
 
-[[ ! -a app.h ]] && ln -s $rtdir/app.h .
+(( has_app_kh )) && [[ ! -a app.h ]] && ln -s $rtdir/app.h .
 
 [[ -a $rtdir/$target ]] && {
     mv $rtdir/$target $curdir/$target
@@ -330,14 +375,9 @@ rtdir=$(realpath --relative-to=$PWD $tmpdir)
 [[ -a $rtdir/Module.symvers ]] && mv $rtdir/Module.symvers $curdir/Module.symvers
 
 # ---------------------------------------------------------------------------
-# Generate and compile applink.c -> applink.o
-#
-# applink.o must be linked directly into the user binary (not as -lapp,
-# since static archive constructors are not guaranteed to be extracted).
-# The user Makefile should add applink.o to its link command.
-# The user binary must also be linked with -rdynamic so that
-# dlsym(RTLD_DEFAULT, ...) can find symbols from the executable itself.
+# Generate and compile applink.c -> applink.o — only when app.kh was provided.
 # ---------------------------------------------------------------------------
+if (( has_app_kh )); then
 
 # Collect resolver names: primary module + any dep modules
 declare -a resolvers
@@ -392,7 +432,7 @@ $(printf "$sym_init")    NULL
 __attribute__((constructor(200)))
 static void __kld_app_link(void)
 {
-    typedef void (*resolver_t)(void **, int);
+    typedef void (*resolver_t)(const char * const *, void **, int);
     const char * const *sp, * const *rp;
     resolver_t res_fns[sizeof(__kld_resolver_names)/sizeof(__kld_resolver_names[0])];
     void *user_addrs[64]; /* generous upper bound; one entry per app.kh symbol */
@@ -423,7 +463,7 @@ static void __kld_app_link(void)
     /* Phase 2: elevate and write pre-resolved addresses into kernel slots. */
     sym_elevate();
     for (i = 0; i < nres; i++)
-        res_fns[i](user_addrs, nsyms);
+        res_fns[i](__kld_user_sym_names, user_addrs, nsyms);
     symbi_fast_lower();
 }
 EOF
@@ -435,5 +475,7 @@ gcc -O2 -fPIC -I${symlibdir}/include -c -o $curdir/applink.o $tmpdir/applink.c
 }
 
 echo "kcc: generated applink.o — add to your binary link command with -rdynamic"
+
+fi  # has_app_kh
 
 exit 0

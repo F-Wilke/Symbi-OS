@@ -1,6 +1,7 @@
 #include <linux/pid.h>
 #include <linux/module.h>
 #include <greeter.kh>
+
 #include "app.h"
 
 //some example functions
@@ -43,6 +44,10 @@ int kernel_user_add(int a, int b) {
 	int res;
 	pr_info("kernel_user_add: __user_sym__user_add slot = %p\n",
 		__user_sym__user_add);
+	if (__user_sym__user_add == NULL) {
+	  pr_info("kernel_user_add: ERROR: __user_sym__user_add: NULL\n");
+	  return 0;
+	}
 	res = user_add(a, b);
 	pr_info("kernel_user_add: %d + %d = %d\n", a, b, res);
 	return res;
@@ -58,6 +63,11 @@ EXPORT_SYMBOL(kernel_user_add);
  * Must be called while elevated (sym_elevate() active).
  */
 int kernel_user_counter_inc(int amount) {
+        if (__user_sym__user_counter == NULL) {
+	  pr_info("kernel_user_counter_inc: ERROR: __user_sym__user_counter: NULL\n");
+	  return 0;
+	}
+	
 	int before = user_counter;
 	pr_info("kernel_user_counter_inc: slot=%p before=%d amount=%d\n",
 		__user_sym__user_counter, before, amount);
