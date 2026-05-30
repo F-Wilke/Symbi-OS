@@ -561,38 +561,44 @@ cleanupEntries(kld_sym *entries, size_t n)
   free(entries);
 }
 
-static void
+static int
 writeso(const char *path, int fd, const kld_sym *entries, size_t n,
 	 size_t nmstrlen)
 {
   int mfd;
   int dfd=fd;
   size_t elf_size;
+  int rc = 0;
   int buildtime = (GBLS.executable == NULL);
   const char *soname = strrchr(path, '/');
   soname = soname ? soname + 1 : path;
   void *elf_ptr = kld_generate_elf_mmap(entries, n, nmstrlen, soname, buildtime, &elf_size, &mfd);
   
-  if (elf_ptr != MAP_FAILED) {
-    VPRINT("%s: ELF mapped at %p (Size: %zu)\n", path, elf_ptr, elf_size);
-    
-    // Example: Write the mapped buffer to a file
-    if (fd==-1) {
-      dfd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-      if (dfd == -1) {
-	perror(path);
-	goto done;
-      }
-    } 
+  if (elf_ptr == MAP_FAILED) return -1;
+
+  VPRINT("%s: ELF mapped at %p (Size: %zu)\n", path, elf_ptr, elf_size);
+  
+  if (fd==-1) {
+    dfd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (dfd == -1) {
+      perror(path);
+      rc = -1;
+      goto done;
+    }
+  } 
+  {
     ssize_t nw = write(dfd, elf_ptr, elf_size);
-    assert(nw>0 && (size_t)nw==elf_size);
-    if (fd == -1) close(dfd);
+    if (nw < 0 || (size_t)nw != elf_size) {
+      perror(path);
+      rc = -1;
+    }
+  }
+  if (fd == -1) close(dfd);
 
  done:
-    // Cleanup mapping
-    munmap(elf_ptr, elf_size);
-    close(mfd);
-  }
+  munmap(elf_ptr, elf_size);
+  close(mfd);
+  return rc;
 }
 
 #if 0
@@ -858,6 +864,27 @@ write_stamp(const char *stamp_path, const char *boot_id,
   return 0;
 }
 
+/*
+ * stamp_covers_so - return 1 if the stamp file is strictly newer than the .so.
+ *
+ * The runtime always writes the stamp AFTER updating the .so (write_stamp uses
+ * atomic rename), so a valid stamp is never older than the .so it covers.
+ * If the .so is newer the stamp is stale — build mode (writeso) rewrote the
+ * .so with build-time placeholder addresses without resetting the stamp.
+ * Use nanosecond precision to avoid false matches when make rebuilds the .so
+ * within the same second the stamp was written.
+ */
+static int
+stamp_covers_so(const char *stamp_path, const char *so_path)
+{
+  struct stat stamp_st, so_st;
+  if (stat(stamp_path, &stamp_st) < 0) return 0;
+  if (stat(so_path, &so_st) < 0) return 0;
+  if (stamp_st.st_mtime != so_st.st_mtime)
+    return stamp_st.st_mtime > so_st.st_mtime;
+  return stamp_st.st_mtim.tv_nsec >= so_st.st_mtim.tv_nsec;
+}
+
 static int
 update_so_runtime(const char *path, const kld_sym *entries, size_t n,
                   size_t nmstrlen)
@@ -867,8 +894,11 @@ update_so_runtime(const char *path, const kld_sym *entries, size_t n,
     return 0;
   }
   VLPRINT(1, "runtime so update fallback rebuild: %s\n", path);
-  writeso(path, -1, entries, n, nmstrlen);
-  return 1;
+  if (writeso(path, -1, entries, n, nmstrlen) < 0) {
+    VLPRINT(1, "runtime so update failed: %s\n", path);
+    return -1;
+  }
+  return 0;
 }
 
 static int
@@ -1087,13 +1117,18 @@ prcKallsyms(FILE *fp, char **kernpath)
         VLPRINT(1, "%s", "runtime stamp path unavailable; skipping stamp read/write for libkern\n");
       } else if (access(GBLS.libkernpath, R_OK) == 0 &&
                  read_stamp(sp, sbid, sizeof(sbid), &sanchor, &shash) == 0 &&
-                 strcmp(sbid, boot_id) == 0 && shash == khash) {
+                 strcmp(sbid, boot_id) == 0 && shash == khash &&
+                 stamp_covers_so(sp, GBLS.libkernpath)) {
         do_update = 0;
       }
       if (do_update) {
-        update_so_runtime(GBLS.libkernpath, kentries, ksyms_i, knmstrlen);
-        if (sp[0] != '\0' && write_stamp(sp, boot_id, kanchor, khash) < 0) {
-          VLPRINT(1, "runtime stamp write failed: %s\n", sp);
+        if (update_so_runtime(GBLS.libkernpath, kentries, ksyms_i, knmstrlen) == 0) {
+          if (sp[0] != '\0' && write_stamp(sp, boot_id, kanchor, khash) < 0) {
+            VLPRINT(1, "runtime stamp write failed: %s\n", sp);
+          }
+        } else {
+          VLPRINT(1, "runtime so update failed, stamp not written: %s\n",
+                  GBLS.libkernpath);
         }
       } else {
         VLPRINT(2, "runtime so skip (hash match): %s\n", GBLS.libkernpath);
@@ -1127,14 +1162,20 @@ prcKallsyms(FILE *fp, char **kernpath)
         } else if (access(mod->bo->sofnm, R_OK) == 0 &&
                    read_stamp(sp, sbid, sizeof(sbid), &sanchor, &shash) == 0 &&
                    strcmp(sbid, boot_id) == 0 &&
-                   sanchor == manchor && shash == mhashv) {
+                   sanchor == manchor && shash == mhashv &&
+                   !(mod->bo->kldopts & KLDOPT_RELOAD) &&
+                   stamp_covers_so(sp, mod->bo->sofnm)) {
           do_update = 0;
         }
         if (do_update) {
-          update_so_runtime(mod->bo->sofnm, mod->entries,
-                            mod->syms_i, mod->nmstrlen);
-          if (sp[0] != '\0' && write_stamp(sp, boot_id, manchor, mhashv) < 0) {
-            VLPRINT(1, "runtime stamp write failed: %s\n", sp);
+          if (update_so_runtime(mod->bo->sofnm, mod->entries,
+                                mod->syms_i, mod->nmstrlen) == 0) {
+            if (sp[0] != '\0' && write_stamp(sp, boot_id, manchor, mhashv) < 0) {
+              VLPRINT(1, "runtime stamp write failed: %s\n", sp);
+            }
+          } else {
+            VLPRINT(1, "runtime so update failed, stamp not written: %s\n",
+                    mod->bo->sofnm);
           }
         } else {
           VLPRINT(2, "runtime so skip (anchor/hash match): %s\n", mod->bo->sofnm);
@@ -1217,7 +1258,10 @@ prcBO(bo_t *bo)
     rc = -1;
     goto done;
   }
-  writeso(bo->sofnm, bo->sofd, entries, n, nmstrlen);
+  if (writeso(bo->sofnm, bo->sofd, entries, n, nmstrlen) < 0) {
+    rc = -1;
+    goto done;
+  }
   if (GBLS.buildexe) {
     const char *bsname = strrchr(bo->sofnm, '/');
     bsname = bsname ? bsname + 1 : bo->sofnm;

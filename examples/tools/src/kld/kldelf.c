@@ -368,9 +368,11 @@ kld_update_elf_dynsym(const char *path, const kld_sym *entries, size_t n)
             elf_flagdata(data, ELF_C_SET, ELF_F_DIRTY);
     }
 
-    if (elf_update(elf, ELF_C_WRITE) < 0)
+    if (elf_update(elf, ELF_C_WRITE) < 0) {
         fprintf(stderr, "kld_update_elf_dynsym: elf_update: %s\n",
                 elf_errmsg(-1));
+        rc = -1;
+    }
     elf_end(elf);
 done:
     free(sorted);
