@@ -4,14 +4,14 @@
 /*
  * Back-linkage declarations for kcuttest.
  *
- * Tag functions with __user_fn__ and data with __user_data__.
+ * List plain C declarations — functions and data are auto-detected.
  * genappheader parses this file and generates:
  *   app.h      — kernel-side extern slots + typed call wrappers
  *   app_init.h — slot definitions (included once by init.c)
  */
 
-__user_fn__   int user_add(int a, int b);
-__user_data__ int user_counter;
+int user_add(int a, int b);
+int user_counter;
 
 #endif /* APP_KH */
 

@@ -175,10 +175,10 @@ if (( has_app_kh )); then
     # Both init.c and applink.c are generated from the same list in the same
     # kcc run, so they always agree on symbol names.
     while IFS= read -r line; do
-        [[ "$line" =~ ^[[:space:]]*(//|#) ]] && continue
-        if [[ "$line" =~ __user_fn__.*[[:space:]\*]([a-zA-Z_][a-zA-Z0-9_]*)[[:space:]]*\( ]]; then
+        [[ -z "$line" || "$line" =~ ^[[:space:]]*(#|//|/\*|\*) ]] && continue
+        if [[ "$line" =~ [[:space:]\*]([a-zA-Z_][a-zA-Z0-9_]*)[[:space:]]*\( ]]; then
             user_syms+=("${BASH_REMATCH[1]}")
-        elif [[ "$line" =~ __user_data__.*[[:space:]\*]([a-zA-Z_][a-zA-Z0-9_]*)[[:space:]]*\; ]]; then
+        elif [[ "$line" =~ [[:space:]\*]([a-zA-Z_][a-zA-Z0-9_]*)[[:space:]]*\; ]]; then
             user_syms+=("${BASH_REMATCH[1]}")
         fi
     done < "$tmpdir/app_orig.h"
@@ -379,12 +379,18 @@ rtdir=$(realpath --relative-to=$PWD $tmpdir)
 # ---------------------------------------------------------------------------
 if (( has_app_kh )); then
 
-# Collect resolver names: primary module + any dep modules
+# Collect resolver names: primary module + any dep modules that have app.kh
 declare -a resolvers
 resolvers+=("__kld_resolve_app_syms_${name}")
 for dep_mod in "${dep_modules[@]}"; do
-    depname=${dep_mod%.ko}
-    resolvers+=("__kld_resolve_app_syms_${depname}")
+    [[ "$dep_mod" = /* ]] && continue
+    depname=$(basename "${dep_mod%.ko}")
+    for search_dir in "${module_search_dirs[@]}"; do
+        if [[ -f "$search_dir/$dep_mod" && -f "$search_dir/app.kh" ]]; then
+            resolvers+=("__kld_resolve_app_syms_${depname}")
+            break
+        fi
+    done
 done
 
 # Build initialisers for both arrays in applink.c
