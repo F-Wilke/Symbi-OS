@@ -442,12 +442,12 @@ static void __kld_app_link(void)
 {
     typedef void (*resolver_t)(const char * const *, void **, int);
     const char * const *sp, * const *rp;
-    resolver_t res_fns[sizeof(__kld_resolver_names)/sizeof(__kld_resolver_names[0])];
     int nsyms = 0, nres = 0, i;
-    /* Count symbols to size the address array exactly. */
     for (sp = __kld_user_sym_names; *sp; sp++) nsyms++;
+    for (rp = __kld_resolver_names; *rp; rp++) nres++;
     void *user_addrs[nsyms > 0 ? nsyms : 1];
-    nsyms = 0; /* reset: fill loop indexes from 0 */
+    resolver_t res_fns[nres > 0 ? nres : 1];
+    nsyms = 0; nres = 0; /* reset: fill loops index from 0 */
 
     /* Phase 1a: resolve user-space symbols via dlsym (safe at ring 3). */
     for (sp = __kld_user_sym_names; *sp; sp++) {
