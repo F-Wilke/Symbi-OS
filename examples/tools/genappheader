@@ -4,12 +4,15 @@ genappheader — generate kernel-side app.h and app_init.h from app.kh
 
 Usage: genappheader <app.h> <app_init.h> <app.kh>
 
-Parses declarations tagged with __user_fn__ or __user_data__ in app.kh:
+Parses plain C declarations in app.kh — no tags required.
+Functions (have a parameter list) and data (no parens) are auto-detected:
 
-  __user_fn__   int user_add(int a, int b);
-  __user_fn__   void user_printf(const char *fmt, ...);   # variadic -> #define
-  __user_data__ int user_counter;
-  __user_data__ struct my_stats user_stats;
+  int user_add(int a, int b);
+  void user_printf(const char *fmt, ...);   # variadic -> #define macro
+  int user_counter;
+  struct my_stats user_stats;
+
+Lines starting with #, //, /*, or * are skipped (preprocessor / comments).
 
 Generates:
   app.h      — extern slot declarations + typed call wrappers (kernel-side)
@@ -84,11 +87,11 @@ def _type_only(typed_params):
 # Parser
 # --------------------------------------------------------------------------- #
 
-# Matches: __user_fn__ <rettype+name> ( <params> ) ;
-_FN_PAT = re.compile(r'__user_fn__\s+(.+\b)\s*\(([^)]*)\)\s*;')
+# Matches: <rettype+name> ( <params> ) ;   — function declaration
+_FN_PAT = re.compile(r'(.+\b)\s*\(([^)]*)\)\s*;')
 
-# Matches: __user_data__ <type+name> ;
-_DATA_PAT = re.compile(r'__user_data__\s+(.+?)\s*;')
+# Matches: <type+name> ;                   — data declaration (fallback)
+_DATA_PAT = re.compile(r'(.+?)\s*;')
 
 
 def parse_kh(kh_path):
@@ -98,7 +101,8 @@ def parse_kh(kh_path):
     with open(kh_path) as f:
         for line in f:
             stripped = line.strip()
-            if not stripped or stripped.startswith('//') or stripped.startswith('#'):
+            if not stripped or stripped.startswith('//') or stripped.startswith('#') \
+                    or stripped.startswith('/*') or stripped.startswith('*'):
                 continue
 
             m = _FN_PAT.search(stripped)
