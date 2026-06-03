@@ -2,6 +2,7 @@
 #include <asm/percpu.h>
 #include <asm/asm.h>
 #include <asm/nospec-branch.h>
+#include <asm/thread_info.h>
 
 #define DEBUG_CNT
 
@@ -23,6 +24,11 @@
 
 	.equ USER_CS, 0x33
 	.equ USER_SS, 0x2b
+
+	.equ CS_MASK, ~0xff
+	.equ SS_MASK, ~0xff
+	.equ FLAGS_MASK, 0xffffffff00000000
+	.equ ERRCODE_MASK, ~0xff
 	
 	.text
 	.align 16
@@ -195,7 +201,7 @@ pf_adaptor_asm_fix_ist_err_code:
 	movq %gs:TSS_sp0(%rsi), %rsi
 	
 	//is cr2 on the page below our kernel stack (in rsi)?
-	subq $0x3000, %rsi
+	subq $(THREAD_SIZE + 0x1000), %rsi
 	movq %cr2, %rcx
 	andw $0xf000, %cx
 	testq %rcx, %rsi
@@ -222,7 +228,12 @@ pf_adaptor_asm_fix_ist_err_code:
 
 	jz  .Lerr_c_skip_flag_set
 
+	movq %cr2, %rcx
+	testq %rcx, %rcx
+	js .Lerr_c_skip_flag_set 
+	//if cr2 is negative, it's a kernel address, so we want to give the appearance that we faulted in the kernel.
 	orl   $(ERRCODE_PF_USER) , 0x20(%rsp)
+
 	movq   $(USER_CS) , 0x30(%rsp)
 	movq   $(USER_SS) , 0x48(%rsp)
 
@@ -247,7 +258,18 @@ pf_adaptor_asm_fix_ist_err_code:
 	popq %rsi
 	popq %rdi
 	cmpq $0, (%rsp)
-	je .Lerr_c_ret_addr_bad
+	je .Lerr_c_ret_state_bad
+	testl $ERRCODE_MASK, 0x8(%rsp)
+	jnz .Lerr_c_ret_state_bad
+	
+	testl $CS_MASK, 0x18(%rsp)
+	jnz .Lerr_c_ret_state_bad
+
+	testl $FLAGS_MASK, 0x20(%rsp)
+	jnz .Lerr_c_ret_state_bad
+
+	testl $SS_MASK, 0x30(%rsp)
+	jnz .Lerr_c_ret_state_bad
 
 .Lerr_c_ret_normal:
 	retq
@@ -260,7 +282,7 @@ pf_adaptor_asm_fix_ist_err_code:
 	jmp .Lerr_c_len_normal
 	int3
 
-.Lerr_c_ret_addr_bad:
+.Lerr_c_ret_state_bad:
 	jmp .Lerr_c_ret_normal
 	int3
 
@@ -330,7 +352,17 @@ pf_adaptor_asm_fix_ist_no_err_code:
 	popq %rsi
 	popq %rdi
 	cmpq $0, (%rsp)
-	je .Lerr_c_ret_addr_bad
+	je .Lerr_c_ret_state_bad
+
+	testl $CS_MASK, 0x10(%rsp)
+	jnz .Lerr_c_ret_state_bad
+
+	testl $FLAGS_MASK, 0x18(%rsp)
+	jnz .Lerr_c_ret_state_bad
+
+	testl $SS_MASK, 0x28(%rsp)
+	jnz .Lerr_c_ret_state_bad
+
 	retq
 	// int3 to satifiy objtool desire for a trap after a speculative jump to try and improve security
 	int3
