@@ -1,36 +1,37 @@
 diff --git a/src/Makefile b/src/Makefile
-index 55cc15847..b2f932d1a 100644
+index 55cc15847..1ee328691 100644
 --- a/src/Makefile
 +++ b/src/Makefile
 @@ -380,6 +380,8 @@ else
      endef
  endif
  
-+FINAL_CFLAGS+=-I../../../../Symlib/include -I../../kcut $(KCUT_CFLAGS)
++FINAL_CFLAGS+= $(KCUT_CFLAGS)
 +
  # Determine install/uninstall Redis symlinks for compatibility when
  # installing/uninstalling Valkey binaries (defaulting to `yes`)
  USE_REDIS_SYMLINKS?=yes
-@@ -499,8 +501,8 @@ ifneq ($(strip $(PREV_FINAL_LDFLAGS)), $(strip $(FINAL_LDFLAGS)))
+@@ -499,8 +501,9 @@ ifneq ($(strip $(PREV_FINAL_LDFLAGS)), $(strip $(FINAL_LDFLAGS)))
  endif
  
  # valkey-server
 -$(SERVER_NAME): $(ENGINE_SERVER_OBJ)
 -	$(SERVER_LD) -o $@ $^ ../deps/libvalkey/lib/libvalkey.a ../deps/lua/src/liblua.a ../deps/hdr_histogram/libhdrhistogram.a ../deps/fpconv/libfpconv.a $(FINAL_LIBS)
-+$(SERVER_NAME): $(ENGINE_SERVER_OBJ) ../../kcut/libextension.a
-+	$(SERVER_LD) -o $@ $^ ../deps/libvalkey/lib/libvalkey.a ../deps/lua/src/liblua.a ../deps/hdr_histogram/libhdrhistogram.a ../deps/fpconv/libfpconv.a $(FINAL_LIBS) -L ../../kcut -lc -lextension -lkallsyms -L ../../../../Symlib/dynam_build ../../../../Symlib/build/L1/L1.a
++$(SERVER_NAME): $(ENGINE_SERVER_OBJ) 
++	$(SERVER_LD) -o $@ $^ ../deps/libvalkey/lib/libvalkey.a ../deps/lua/src/liblua.a ../deps/hdr_histogram/libhdrhistogram.a ../deps/fpconv/libfpconv.a $(FINAL_LIBS) $(KCUT_LDFLAGS)
++	${KLD} ${KLDFLAGS} -o $@
  
  # Valkey static library, used to compile against for unit testing
  $(ENGINE_LIB_NAME): $(ENGINE_SERVER_OBJ)
 diff --git a/src/server.c b/src/server.c
-index 838459336..9923af4e5 100644
+index 838459336..3aeb8e5b1 100644
 --- a/src/server.c
 +++ b/src/server.c
 @@ -79,6 +79,8 @@
  #include <sys/mman.h>
  #endif
  
-+#include "../../kcut/kcut.h"
++#include "kcut.h"
 +
  #if defined(HAVE_SYSCTL_KIPC_SOMAXCONN) || defined(HAVE_SYSCTL_KERN_SOMAXCONN)
  #include <sys/sysctl.h>
@@ -60,14 +61,14 @@ index 838459336..9923af4e5 100644
  }
  
 diff --git a/src/socket.c b/src/socket.c
-index 336b250cc..3c086ee5c 100644
+index 336b250cc..a9d42f740 100644
 --- a/src/socket.c
 +++ b/src/socket.c
 @@ -155,12 +155,15 @@ static void connSocketClose(connection *conn) {
      zfree(conn);
  }
  
-+#include "../../kcut/kcut_tcpmsg.h"
++#include "kcut_tcpmsg.h"
 +
  static int connSocketWrite(connection *conn, const void *data, size_t data_len) {
      /* Assert the main thread is not writing to a connection that is currently offloaded. */

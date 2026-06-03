@@ -1,8 +1,9 @@
 CC := gcc
+KCC := ../tools/kcc
+KLD := ../tools/src/kld/kld
 O  := 2
 CFLAGS = -O${O} -ggdb -MD -MP -Wall -Wextra  -Wfatal-errors -fPIC
 CFLAGS += -I ../kcutef -I ../kcutevac -I ../../Symlib/include -DDYNLINK
-#KFLAGS = -I ../kcutidt -K ../kcutidt -k kcutidt.ko
 KFLAGS  = -K ../kcutidt -K ../kcutef -K ../kcutevac -k kcutidt.ko -k kcutef.ko -k kcutevac.ko -k /proc/kallsyms
 TARGET  := kcuttest
 KTARGET := kcuttest.ko 
@@ -19,12 +20,12 @@ all: ${KTARGET} $(TARGET)
 %.o: %.c 
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-${KTARGET} app.h applink.o: $(wildcard *.kc *.kh *.kS)
-	 ../tools/kcc -o ${KTARGET} ${KFLAGS}
+${KTARGET} kotbl.bin app.h applink.o: $(wildcard *.kc *.kh *.kS)
+	 ${KCC} -o ${KTARGET} ${KFLAGS}
 
-${TARGET}:  main.o mmap_stack_test.o applink.o
+${TARGET}:  main.o mmap_stack_test.o applink.o | kotbl.bin
 	$(CC) $(CFLAGS) -o $@ $^ ${LDFLAGS}
-	../tools/src/kld/kld -o $@
+	${KLD} -o $@
 
 -include *.d
 
