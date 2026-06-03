@@ -321,7 +321,7 @@ kld_update_elf_dynsym(const char *path, const kld_sym *entries, size_t n)
 {
     int rc = 0;
     int dfd = open(path, O_RDWR);
-    if (dfd == -1) { perror(path); return -1; }
+    if (dfd == -1) { if (GBLS.verbose) perror(path); return -1; }
 
     // Sorted copy of entries for O(log n) lookup by name
     kld_sym *sorted = malloc(n * sizeof(kld_sym));

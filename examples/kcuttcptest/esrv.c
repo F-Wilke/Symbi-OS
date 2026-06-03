@@ -23,7 +23,7 @@
 #ifdef KCUT_TCP
 // uncomment next line or pass -D EVACUATE at compile to turn on evacution
 #define EVACUATE
-#include "kcut/kcut_tcpmsg.h"
+#include "kcut_tcpmsg.h"
 #endif
 
 #define PORT       8080

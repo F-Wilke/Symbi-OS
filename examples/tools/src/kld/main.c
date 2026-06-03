@@ -22,7 +22,7 @@ static void
 usage(char *name, FILE *fp)
 {
   fprintf(fp,
-	  "%s [-h] [-v] [-O lib] [-K dir] "
+	  "%s [-h] [-v] [-O lib] [-t kotbl path] [-K dir] "
 	  "[-k kofile[,modnm[,kldopts]]] "
 	  "[-o exe] [Elf]\n"
 	  "   -h     : print this usage message\n"
@@ -438,7 +438,7 @@ GBLSInit(int argc, char **argv)
   }
   addDir(GBLS.cwd);
   
-  while ((opt = getopt(argc, argv, "K:k:O:o:hv")) != -1) {
+  while ((opt = getopt(argc, argv, "K:k:O:o:t:hv")) != -1) {
     switch (opt) {
     case 'K':
       addDir(optarg);
@@ -468,6 +468,9 @@ GBLSInit(int argc, char **argv)
 	kospec[kospecc] = optarg;
 	kospecc++;
       }
+      break;
+    case 't':
+      GBLS.kotblfile = optarg;
       break;
     case 'v':
       GBLS.verbose++;
@@ -1239,8 +1242,6 @@ cleanup(void)
     free(GBLS.dirs);
     GBLS.dirs = NULL;
   }
-  // not dynamic memory
-  // if (GBLS.libkernpath) free(GBLS.libkernpath);
 }
 
 static int

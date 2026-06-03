@@ -1,9 +1,0 @@
-*.kh
-*.kc
-*.kS
-app.h
-idtadaptor.h
-ktos.h
-kcut.h
-evacuate.h
-kcut_tcpmsg.h
