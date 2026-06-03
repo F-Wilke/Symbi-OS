@@ -23,7 +23,7 @@ index 55cc15847..b2f932d1a 100644
  # Valkey static library, used to compile against for unit testing
  $(ENGINE_LIB_NAME): $(ENGINE_SERVER_OBJ)
 diff --git a/src/server.c b/src/server.c
-index 838459336..9923af4e5 100644
+index 838459336..69a4eea49 100644
 --- a/src/server.c
 +++ b/src/server.c
 @@ -79,6 +79,8 @@
@@ -35,18 +35,15 @@ index 838459336..9923af4e5 100644
  #if defined(HAVE_SYSCTL_KIPC_SOMAXCONN) || defined(HAVE_SYSCTL_KERN_SOMAXCONN)
  #include <sys/sysctl.h>
  #endif
-@@ -7140,7 +7142,9 @@ __attribute__((weak)) int main(int argc, char **argv) {
+@@ -7140,7 +7142,6 @@ __attribute__((weak)) int main(int argc, char **argv) {
      struct timeval tv;
      int j;
      char config_from_stdin = 0;
 -
-+#ifdef EVACUATE
-+    evacuate(); // Evacuate core
-+#endif
      /* We need to initialize our libraries, and the server configuration. */
  #ifdef INIT_SETPROCTITLE_REPLACEMENT
      spt_init(argc, argv);
-@@ -7441,8 +7445,12 @@ __attribute__((weak)) int main(int argc, char **argv) {
+@@ -7441,8 +7442,12 @@ __attribute__((weak)) int main(int argc, char **argv) {
      serverSetCpuAffinity(server.server_cpulist);
      setOOMScoreAdj(-1);
  

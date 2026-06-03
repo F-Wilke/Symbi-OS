@@ -108,7 +108,7 @@ index 1858d02..308c589 100644
          case GRACE_STOP:
              fprintf(stderr, "Gracefully stopping\n");
 diff --git a/thread.c b/thread.c
-index 9ddbefe..648d0b9 100644
+index 9ddbefe..b3f07ca 100644
 --- a/thread.c
 +++ b/thread.c
 @@ -501,6 +501,7 @@ static void setup_thread(LIBEVENT_THREAD *me) {
@@ -119,21 +119,17 @@ index 9ddbefe..648d0b9 100644
  /*
   * Worker thread: main event loop
   */
-@@ -521,6 +522,13 @@ static void *worker_libevent(void *arg) {
+@@ -521,6 +522,9 @@ static void *worker_libevent(void *arg) {
      }
  
      register_thread_initialized();
-+
-+#ifdef EVACUATE
-+    evacuate(); // Evacuate core
-+#endif
 +
 +    kcut_init();
 +
      while (!event_base_got_exit(me->base)) {
          event_base_loop(me->base, EVLOOP_ONCE);
          // Run IO queues after the event loop to catch things like
-@@ -532,6 +540,9 @@ static void *worker_libevent(void *arg) {
+@@ -532,6 +536,9 @@ static void *worker_libevent(void *arg) {
          }
  #endif
      }

@@ -1,26 +1,49 @@
 .PHONY: clean distclean
 TARGETS=valkey/src/valkey-server-cpcs valkey/src/valkey-server-bpcs valkey/src/valkey-server-cpbs valkey/src/valkey-server-bpbs
+TARGETS+=valkey/src/valkey-server-cpcs-evac valkey/src/valkey-server-bpcs-evac valkey/src/valkey-server-cpbs-evac valkey/src/valkey-server-bpbs-evac
 
 all: $(TARGETS)
 
 valkey/src/valkey-server-cpcs: kcut/extension.a valkey/Makefile
 	make -C valkey clean
-	make -j -C valkey KCUT_CFLAGS=''  V=1
+	make -j -C valkey KCUT_CFLAGS='-DSHORTCUT=0'  V=1
 	mv valkey/src/valkey-server $@
 
 valkey/src/valkey-server-bpcs: kcut/extension.a valkey/Makefile
 	make -C valkey clean
-	make -j -C valkey KCUT_CFLAGS='-D BRACKET_PRIV' V=1
+	make -j -C valkey KCUT_CFLAGS='-DSHORTCUT=0 -D BRACKET_PRIV' V=1
 	mv valkey/src/valkey-server $@
 
 valkey/src/valkey-server-cpbs: kcut/extension.a valkey/Makefile
 	make -C valkey clean
-	make -j -C valkey KCUT_CFLAGS='-D BRACKET_STACK' V=1
+	make -j -C valkey KCUT_CFLAGS='-DSHORTCUT=0 -D BRACKET_STACK' V=1
 	mv valkey/src/valkey-server $@
 
 valkey/src/valkey-server-bpbs: kcut/extension.a valkey/Makefile
 	make -C valkey clean
-	make -j -C valkey KCUT_CFLAGS='-D BRACKET_PRIV -D BRACKET_STACK'  V=1
+	make -j -C valkey KCUT_CFLAGS='-DSHORTCUT=0 -D BRACKET_PRIV -D BRACKET_STACK'  V=1
+	mv valkey/src/valkey-server $@
+
+
+
+valkey/src/valkey-server-cpcs-evac: kcut/extension.a valkey/Makefile
+	make -C valkey clean
+	make -j -C valkey KCUT_CFLAGS='-DSHORTCUT=0 -D EVACUATE' V=1
+	mv valkey/src/valkey-server $@
+
+valkey/src/valkey-server-bpcs-evac: kcut/extension.a valkey/Makefile
+	make -C valkey clean
+	make -j -C valkey KCUT_CFLAGS='-DSHORTCUT=0 -D BRACKET_PRIV -D EVACUATE' V=1
+	mv valkey/src/valkey-server $@
+
+valkey/src/valkey-server-cpbs-evac: kcut/extension.a valkey/Makefile
+	make -C valkey clean
+	make -j -C valkey KCUT_CFLAGS='-DSHORTCUT=0 -D BRACKET_STACK -D EVACUATE' V=1
+	mv valkey/src/valkey-server $@
+
+valkey/src/valkey-server-bpbs-evac: kcut/extension.a valkey/Makefile
+	make -C valkey clean
+	make -j -C valkey KCUT_CFLAGS='-DSHORTCUT=0 -D BRACKET_PRIV -D BRACKET_STACK -D EVACUATE' V=1
 	mv valkey/src/valkey-server $@
 
 kcut/extension.a:
