@@ -5,151 +5,204 @@
 #include <linux/delay.h>
 #include "evacuate.kh"
 
-
 // Store original affinities to restore later
-struct task_affinity {
-    struct task_struct *task;
-    cpumask_t original_mask;
-    struct list_head list;
+struct task_affinity
+{
+  struct task_struct *task;
+  cpumask_t original_mask;
+  struct list_head list;
 };
 
 static LIST_HEAD(saved_affinities);
 static DEFINE_SPINLOCK(affinity_lock);
 
+//lock to serialize calls to acquire_exclusive_cpu and release_exclusive_cpu to avoid race
+static DEFINE_MUTEX(evac_mutex);
 
 // Save task affinity before migration
-static int save_task_affinity(struct task_struct *task) {
-    struct task_affinity *ta;
-    
-    ta = kmalloc(sizeof(struct task_affinity), GFP_ATOMIC);
-    if (!ta) {
-        pr_warn("EVAC:Failed to allocate memory for task affinity\n");
-        return -ENOMEM;
-    }
-    
-    // Save task and its original affinity
-    ta->task = task;
-    get_task_struct(task);  // Increment refcount
-    cpumask_copy(&(ta->original_mask), &(task->cpus_mask));
-    
-    // Add to saved list
-    spin_lock(&affinity_lock);
-    list_add(&ta->list, &saved_affinities);
-    spin_unlock(&affinity_lock);
-    
-    return 0;
+static int save_task_affinity(struct task_struct *task)
+{
+  struct task_affinity *ta;
+
+  ta = kmalloc(sizeof(struct task_affinity), GFP_ATOMIC);
+  if (!ta)
+  {
+    pr_warn("EVAC:Failed to allocate memory for task affinity\n");
+    return -ENOMEM;
+  }
+
+  // Save task and its original affinity
+  ta->task = task;
+  get_task_struct(task); // Increment refcount
+  cpumask_copy(&(ta->original_mask), &(task->cpus_mask));
+
+  // Add to saved list
+  spin_lock(&affinity_lock);
+  list_add(&ta->list, &saved_affinities);
+  spin_unlock(&affinity_lock);
+
+  return 0;
 }
 
 // Restore all saved affinities
 // return on success and -1 if we were not on the list
 // indicating that we restored but were not the so something went wrong!
-static int restore_saved_affinities(void) {
+static int restore_saved_affinities(void)
+{
   struct task_affinity *ta, *tmp;
   int restored = 0, failed = 0;
   int rc = -1;
   spin_lock(&affinity_lock);
-  list_for_each_entry_safe(ta, tmp, &saved_affinities, list) {
-    if (ta->task == current) rc = 0;  // found ourselves! 
+  list_for_each_entry_safe(ta, tmp, &saved_affinities, list)
+  {
+    if (ta->task == current)
+      rc = 0; // found ourselves!
     // Check if task still exists (might have exited)
-    if (pid_alive(ta->task)) {
+    if (pid_alive(ta->task))
+    {
       set_cpus_allowed_ptr(ta->task, &ta->original_mask);
       restored++;
-    } else {
+    }
+    else
+    {
       failed++;
     }
-    
+
     // Cleanup
-    put_task_struct(ta->task);  // Decrement refcount
+    put_task_struct(ta->task); // Decrement refcount
     list_del(&ta->list);
     kfree(ta);
   }
   spin_unlock(&affinity_lock);
-  
-  pr_info("EVAC: Restored affinity for %d tasks (%d tasks no longer exist)\n", 
-	  restored, failed);
+
+  pr_info("EVAC: Restored affinity for %d tasks (%d tasks no longer exist)\n",
+          restored, failed);
   return rc;
 }
 
 // Check if task is an ancestor of current
-static bool is_ancestor(struct task_struct *task) {
-    struct task_struct *t = current;
+static bool is_ancestor(struct task_struct *task)
+{
+  struct task_struct *t = current;
 
-    // walk parents
-    while (t && t->pid > 1) {
-        if (t == task) return true;
-        t = t->real_parent;
-    }
-    return false;
+  // walk parents
+  while (t && t->pid > 1)
+  {
+    if (t == task)
+      return true;
+    t = t->real_parent;
+  }
+  return false;
+}
+
+
+
+// Check if process should be preserved
+static bool should_preserve_migrate(struct task_struct *task)
+{
+  // Always preserve init
+  if (task->pid == 1)
+  return true;
+  
+  // Preserve kernel threads
+  if (task->flags & PF_KTHREAD)
+  return true;
+  
+  // Preserve current process
+  if (task == current)
+  return true;
+  
+  return false;
 }
 
 // Check if process should be preserved
-static bool should_preserve(struct task_struct *task) {
-    // Always preserve init
-    if (task->pid == 1) return true;
-    
-    // Preserve kernel threads
-    if (task->flags & PF_KTHREAD) return true;
-    
-    // Preserve current process
-    if (task == current) return true;
-    
-    // Preserve ancestors of current process
-    if (is_ancestor(task)) return true;
-    
-    // Preserve session leader if current is in that session
-    if (task->signal && current->signal && 
-        task_session(task) == task_session(current))
-      return true;
-    
-    return false;
+static bool should_preserve_kill(struct task_struct *task)
+{
+  if (should_preserve_migrate(task))
+    return true;
+
+  // Preserve ancestors of current process
+  if (is_ancestor(task))
+    return true;
+
+  // Preserve session leader if current is in that session
+  if (task->signal && current->signal &&
+      task_session(task) == task_session(current))
+    return true;
+
+  return false;
 }
 
 // Kill all non-essential processes
-static int killothers(int killifneeded) {
-    struct task_struct *p, *t;
-    int killed = 0;
+static int killothers(int killifneeded)
+{
+  struct task_struct *p, *t;
+  int killed = 0;
 
-    rcu_read_lock();
-    for_each_process(p) {
-        for_each_thread(p, t) {
-            if (killifneeded<2 && should_preserve(t)) continue;
-	    if (killifneeded>0) {
-	      pr_info("EVAC: Killing process: %s (PID %d)\n", t->comm, t->pid);            
-	      // Send SIGKILL
-	      send_sig(SIGKILL, t, 1);
-	    }
-            killed++;
-        }
+  rcu_read_lock();
+  for_each_process(p)
+  {
+    for_each_thread(p, t)
+    {
+      if (killifneeded < 2 && should_preserve_kill(t))
+        continue;
+      if (killifneeded > 0)
+      {
+        pr_info("EVAC: Killing process: %s (PID %d)\n", t->comm, t->pid);
+        // Send SIGKILL
+        send_sig(SIGKILL, t, 1);
+      }
+      killed++;
     }
-    rcu_read_unlock();
-    
-    // Give processes time to die
-    if (killifneeded>0 && killed>0) msleep(100);
-    if (killifneeded>0) pr_info("EVAC: Killed %d processes\n", killed);
-    return killed;
+  }
+  rcu_read_unlock();
+
+  // Give processes time to die
+  if (killifneeded > 0 && killed > 0)
+    msleep(100);
+  if (killifneeded > 0)
+    pr_info("EVAC: Killed %d processes\n", killed);
+  return killed;
 }
 
 // Migrate all other non-kernel tasks
-//othermask: the mask to migrate other tasks to (should not include the reserved cpu)
+// othermask: the mask to migrate other tasks to (should not include the reserved cpu)
 static int migrateothers(long reserved_cpu, cpumask_var_t othermask)
 {
   struct task_struct *p, *t;
   int rc, migrated = 0;
-  
-  rcu_read_lock();
-  for_each_process(p) {
-    for_each_thread(p, t) {
-      if (t == current) continue;
-      if (should_preserve(t)) continue;  // skip essential processes
 
-      if (cpumask_test_cpu(reserved_cpu, &t->cpus_mask)) {
-	rc = save_task_affinity(t);
-	if (rc != 0) {
-	  pr_err("EVAC: failed to save the affinity for task %d\n", t->pid);
-	}
-	set_cpus_allowed_ptr(t, othermask);
-	pr_info("EVAC: Task %d migrated from CPU %ld\n", t->pid, reserved_cpu);
-	migrated++;
+  rcu_read_lock();
+  for_each_process(p)
+  {
+    for_each_thread(p, t)
+    {
+      if (t == current)
+        continue;
+      if (should_preserve_migrate(t))
+        continue; // skip essential processes
+
+      if (cpumask_test_cpu(reserved_cpu, &t->cpus_mask))
+      {
+        rc = save_task_affinity(t);
+        if (rc != 0)
+        {
+          pr_err("EVAC: failed to save the affinity for task %d\n", t->pid);
+        }
+        // create mask specific for this thread: AND between the othermask and the current affinity mask of the thread
+        cpumask_t thread_target_mask;
+        cpumask_and(&thread_target_mask, othermask, &t->cpus_mask);
+
+        // warn and fall back to original mask if the thread has no other cpu to migrate to
+        if (cpumask_empty(&thread_target_mask))
+        {
+          pr_warn("EVAC: Task %d (%s) has no other CPU to migrate to! Keeping it on CPU %ld\n", t->pid, t->comm, reserved_cpu);
+          continue;
+        }
+
+        set_cpus_allowed_ptr(t, &thread_target_mask);
+        pr_info("EVAC: Task %d (%s) migrated from CPU %ld\n", t->pid, t->comm, reserved_cpu);
+        migrated++;
       }
     }
   }
@@ -157,110 +210,142 @@ static int migrateothers(long reserved_cpu, cpumask_var_t othermask)
   return migrated;
 }
 
-long acquire_exclusive_cpu(long reserved_cpu, int killifneeded) {
-  cpumask_var_t target_mask=NULL, other_mask=NULL;
+long acquire_exclusive_cpu(long reserved_cpu, int killifneeded)
+{
+  cpumask_var_t target_mask = NULL, other_mask = NULL;
   struct sched_attr attr = {
-    .size = sizeof(struct sched_attr),
-    .sched_policy = SCHED_FIFO,
-    .sched_priority = 99,  // Highest RT priority
+      .size = sizeof(struct sched_attr),
+      .sched_policy = SCHED_FIFO,
+      .sched_priority = 99, // Highest RT priority
   };
+
+  pr_info("EVAC: Task %d requesting exclusive access to CPU %ld with killifneeded=%d\n",
+          current->pid, reserved_cpu, killifneeded);
+
+  //acquire lock
+  mutex_lock(&evac_mutex);
+
   int num_cpus = num_online_cpus();
-  int rc = 0, mkcnt=0; 
- 
+  int rc = 0, mkcnt = 0;
+
+  reserved_cpu = smp_processor_id();
+  pr_info("EVAC: Task %d requesting exclusive access to CPU %ld (currently on CPU %lu)\n",
+          current->pid, reserved_cpu, reserved_cpu);
+
+  
+
   // sanity checks
-  if (reserved_cpu < 0 || reserved_cpu >= nr_cpu_ids) {
-    pr_err("EVAC: Invalid CPU %ld (valid range: 0-%d)\n", 
-	   reserved_cpu, nr_cpu_ids - 1);
+  if (reserved_cpu < 0 || reserved_cpu >= nr_cpu_ids)
+  {
+    pr_err("EVAC: Invalid CPU %ld (valid range: 0-%d)\n",
+           reserved_cpu, nr_cpu_ids - 1);
     rc = -EINVAL;
     goto done;
   }
-  if (!cpu_online(reserved_cpu)) {
+  if (!cpu_online(reserved_cpu))
+  {
     pr_err("EVAC: CPU %ld is not online\n", reserved_cpu);
     rc = -EINVAL;
     goto done;
   }
-  
+
   // allocate cpumasks on heap to avoid large stack frame
-  if (!alloc_cpumask_var(&target_mask, GFP_ATOMIC)) {
+  if (!alloc_cpumask_var(&target_mask, GFP_ATOMIC))
+  {
     pr_warn("EVAC: Failed to allocate cpumask for target_mask\n");
     rc = -ENOMEM;
     goto done;
   }
-  
+
   // do this up front to avoid complications later
-  if (!alloc_cpumask_var(&other_mask, GFP_ATOMIC)) {
+  if (!alloc_cpumask_var(&other_mask, GFP_ATOMIC))
+  {
     pr_warn("EVAC: Failed to allocate cpumask for other_mask\n");
     free_cpumask_var(target_mask);
     rc = -ENOMEM;
     goto done;
   }
-  
+
   // set target_mask to only the reserved cpu
   cpumask_clear(target_mask);
   cpumask_set_cpu(reserved_cpu, target_mask);
-  
+
   // 1. pin this task to the reserved cpu immediately
-  save_task_affinity(current);               // explicity add our selfs to the saved affinity list
-                                             // means list should always at least have us on it
+  save_task_affinity(current); // explicity add our selfs to the saved affinity list
+                               // means list should always at least have us on it
   set_cpus_allowed_ptr(current, target_mask);
-  
+
   // 2. Take care of other tasks -- migrate or kill as needed/possible
-  if (num_cpus == 1) {
+  if (num_cpus == 1)
+  {
     pr_info("EVAC: single cpu & killifneeded=%d\n", killifneeded);
     mkcnt = killothers(killifneeded);
-    if (killifneeded==0 && mkcnt>0) {
+    if (killifneeded == 0 && mkcnt > 0)
+    {
       pr_err("EVAC: single cpu -- no other cpus to migrate other tasks\n");
       rc = -EINVAL;
       goto done;
     }
-  } else {
+  }
+  else
+  {
     pr_info("EVAC: migrating tasks from CPU %ld\n", reserved_cpu);
     cpumask_andnot(other_mask, cpu_online_mask, target_mask);
     mkcnt = migrateothers(reserved_cpu, other_mask);
-    if (mkcnt<0) {
+    if (mkcnt < 0)
+    {
       pr_err("EVAC: failed to migrate tasks\n");
       rc = -EINVAL;
       goto done;
-    } 
+    }
   }
 
   // 3. Boost priority: Set highest RT priority
   rc = sched_setattr_nocheck(current, &attr); // returns 0 on success
-  if (rc) {
+  if (rc)
+  {
     pr_err("EVAC: Failed to set scheduling attributes: %d\n", rc);
     goto done;
-  } 
- 
-  pr_info("EVAC: Task %d acquired exclusive access to CPU %ld\n", 
-	  current->pid, reserved_cpu);
- done:
-  if (target_mask) free_cpumask_var(target_mask);
-  if (other_mask) free_cpumask_var(other_mask);
-  if (rc != 0) {
+  }
+
+  pr_info("EVAC: Task %d acquired exclusive access to CPU %ld\n",
+          current->pid, reserved_cpu);
+done:
+  if (target_mask)
+    free_cpumask_var(target_mask);
+  if (other_mask)
+    free_cpumask_var(other_mask);
+  if (rc != 0)
+  {
     pr_err("EVAC: %d failed to get exclusive access to CPU %ld. Releasing\n",
-	   current->pid, reserved_cpu);
-    restore_saved_affinities();   // restore and cleanup any affinities that were saved
+           current->pid, reserved_cpu);
+    restore_saved_affinities(); // restore and cleanup any affinities that were saved
     // if we got here we did not boost our priority so no need to set back to normal
   }
-  return rc;  
+  mutex_unlock(&evac_mutex);
+  return rc;
 }
 
-void release_exclusive_cpu(long reserved_cpu) {
+void release_exclusive_cpu(long reserved_cpu)
+{
   struct sched_attr attr = {
-    .size = sizeof(struct sched_attr),
-    .sched_policy = SCHED_NORMAL,
-    .sched_priority = 0,
-    .sched_nice = 0,
+      .size = sizeof(struct sched_attr),
+      .sched_policy = SCHED_NORMAL,
+      .sched_priority = 0,
+      .sched_nice = 0,
   };
-    
+  mutex_lock(&evac_mutex);
+
   // Restore normal affinity & this will also restore our own
-  if (restore_saved_affinities()!=0) {
+  if (restore_saved_affinities() != 0)
+  {
     pr_err("EVAC: %d called release_exclusive_cpu(%ld) not affinity was not saved!!\n",
-	   current->pid, reserved_cpu);
+           current->pid, reserved_cpu);
   }
-  
+
   // Restore normal priority
   sched_setattr_nocheck(current, &attr);
-  
+
   pr_info("EVAC: Task %d released CPU %ld\n", current->pid, reserved_cpu);
+  mutex_unlock(&evac_mutex);
 }

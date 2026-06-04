@@ -7,6 +7,17 @@
 
 extern int KCUT_THRESHOLD;
 
+#ifndef SHORTCUT
+#define SHORTCUT 1
+#endif
+
+
+#if !SHORTCUT
+#include <unistd.h>
+extern ssize_t ksys_read(int fd, void *buf, size_t count);
+extern ssize_t ksys_write(int fd, const void *buf, size_t count);
+#endif
+
 
 // ukl inspired shortcut interfaces
 struct kcut_tcpmsg_thunk_args {
@@ -19,15 +30,25 @@ static inline
 void * kcut_tcp_recvmsg_thunk(void *targs) {
   struct kcut_tcpmsg_thunk_args *args = (struct kcut_tcpmsg_thunk_args *)targs;
   int fd = args->fd;
+#if SHORTCUT
   struct iovec *iov = args->iov; 
   return (void *)((intptr_t)kcut_tcp_recvmsg(fd, iov));
+#else
+  return (void*)((intptr_t)ksys_read(fd, args->iov->iov_base, args->iov->iov_len));
+#endif
+
 }
 
 void * kcut_tcp_sendmsg_thunk(void *targs) {
   struct kcut_tcpmsg_thunk_args *args = (struct kcut_tcpmsg_thunk_args *)targs;
   int fd = args->fd;
+
+#if SHORTCUT
   struct iovec *iov = args->iov; 
   return (void *)((intptr_t)kcut_tcp_sendmsg(fd, iov));
+#else
+  return (void*)((intptr_t)ksys_write(fd, args->iov->iov_base, args->iov->iov_len));
+#endif
 }
 
 
@@ -54,7 +75,11 @@ ssize_t kcut_tcp_read(int fd, void *buf, size_t count)
     LOWER_ME();
 #else
     ELEVATE_ME();
+#if SHORTCUT
     ret = kcut_tcp_recvmsg(fd, &iov);
+#else
+    ret = (int)((intptr_t)ksys_read(fd, iov.iov_base, iov.iov_len));
+#endif
     LOWER_ME();
 #endif
 
@@ -91,7 +116,11 @@ ssize_t kcut_tcp_write(int fd, void *buf, size_t count)
     LOWER_ME();
 #else
     ELEVATE_ME();
+#if SHORTCUT
     ret = kcut_tcp_sendmsg(fd, &iov);
+#else
+    ret = (int)((intptr_t)ksys_write(fd, iov.iov_base, iov.iov_len));
+#endif
     LOWER_ME();
 #endif
 

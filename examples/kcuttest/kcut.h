@@ -2,6 +2,7 @@
 #define __KCUT_H__
 
 #include <stdlib.h>
+#include <stdio.h>
 #include <L0/sym_lib.h>
 #include <L1/stack_switch.h>
 
@@ -15,6 +16,8 @@
 #include "evacuate.kh"
 #include "evacuate.h"
 #endif
+
+#include "greeter.kh"
 
 #ifdef  BRACKET_PRIV
 #define ELEVATE_ME() sym_elevate();
@@ -38,6 +41,11 @@ static inline void kcut_init(void)
   } else {
     KCUT_THRESHOLD = 20; // default value
   }
+
+  printf("KCUT_THRESHOLD set to %d\n", KCUT_THRESHOLD);
+  sym_elevate();
+  printf("kcut_init: current pid %d\n", current_pid()); //this is also makes sure that the kernel module is loaded because current_pid is resolved by ifunc
+  symbi_fast_lower();
 
 #ifndef BRACKET_PRIV
   sym_elevate();
