@@ -12,6 +12,7 @@ KCUT_LDFLAGS := -lc  $(realpath ../../Symlib/build/L1/L1.a)  -L $(realpath ../kc
 .PHONY: clean distclean
 TARGETS=valkey/src/valkey-server-cpcs valkey/src/valkey-server-bpcs valkey/src/valkey-server-cpbs valkey/src/valkey-server-bpbs
 TARGETS+=valkey/src/valkey-server-cpcs-evac valkey/src/valkey-server-bpcs-evac valkey/src/valkey-server-cpbs-evac valkey/src/valkey-server-bpbs-evac
+TARGETS+=valkey/src/valkey-server-cpcs-evac-ds valkey/src/valkey-server-bpcs-evac-ds valkey/src/valkey-server-cpbs-evac-ds valkey/src/valkey-server-bpbs-evac-ds
 
 all: $(TARGETS)
 
