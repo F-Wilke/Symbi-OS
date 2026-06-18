@@ -133,7 +133,6 @@ int main(int argc, char **argv) {
   volatile void * _printk_ptr;
   unsigned num_forks = 1000, num_spawns = 1000, num_increments = 1000;
   unsigned stack_df = 1;
-  unsigned do_test_pfasm = 0;
   unsigned do_test_interrupt = 0;
   
   _printk_ptr = (void *)_printk;
@@ -145,8 +144,7 @@ int main(int argc, char **argv) {
   if (argc > 6) num_spawns = atoi(argv[6]);
   if (argc > 7) num_increments = atoi(argv[7]);
   if (argc > 8) stack_df = atoi(argv[8]);
-  if (argc > 9) do_test_pfasm = atoi(argv[9]);
-  if (argc > 10) do_test_interrupt = atoi(argv[10]);
+  if (argc > 9) do_test_interrupt = atoi(argv[9]);
   
   printf("%d: BASIC KCUT TESTS: BEGIN: ssec=%d bloop=%lu yieldcnt=%lu\n", mypid, ssec, bloop, yieldcnt);
 
@@ -279,23 +277,6 @@ int main(int argc, char **argv) {
   
   printf("\t\t%d: %lx: DOUBLE FAULT TEST: %d END\n", mypid, cr3, ret);
   
-  printf("\t\t%d: %lx: IST STACK BEHAVIOUR TEST: START\n", mypid, cr3);
-  
-  if (do_test_pfasm) {
-    test_pfasm(1,1);
-    printf("\t\t%d: %lx: IST STACK BEHAVIOUR TEST: Completed kernel + err code scenario\n", mypid, cr3);
-    
-    test_pfasm(1,0);
-    printf("\t\t%d: %lx: IST STACK BEHAVIOUR TEST: Completed kernel + no err code scenario\n", mypid, cr3);
-    
-    test_pfasm(0,1);
-    printf("\t\t%d: %lx: IST STACK BEHAVIOUR TEST: Completed user + err code scenario\n", mypid, cr3);
-    
-    test_pfasm(0,0);
-    printf("\t\t%d: %lx: IST STACK BEHAVIOUR TEST: Completed user + no err code scenario\n", mypid, cr3);
-  }
-  
-  printf("\t\t%d: %lx: IST STACK BEHAVIOUR TEST: END\n", mypid, cr3);
   
   printf("\t\t%d: %lx: E0 INTERRUPT TEST: START\n", mypid, cr3);
   if (do_test_interrupt) {

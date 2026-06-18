@@ -8,7 +8,6 @@ unsigned long pf_adaptor_pf_cnt_get(void);
 unsigned long pf_adaptor_df_cnt_get(void);
 unsigned long pf_adaptor_gp_cnt_get(void);
 
-void test_pfasm(int use_ker_stack, int include_err_code);
 void set_local_df_handler_location(void);
 
 #endif
