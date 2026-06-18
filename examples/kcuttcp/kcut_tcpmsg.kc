@@ -21,7 +21,7 @@ int  kcut_tcp_recvmsg(int fd, struct iovec *iov)
   //        check if we need to be adjust flags value
   int flags    = 0;          // from ukl shortcut_tcp_recvmsg ??? 
 
-    //A: Translate fd to sock *
+  //A: Translate fd to sock *	
   //   From fs/read_write.c:ksys_write : 
   //     1. fd -> struct fd : 
   //        Fiven that fdget_pos is an internal routine we will use fget(fd) -- module friendly
@@ -35,17 +35,14 @@ int  kcut_tcp_recvmsg(int fd, struct iovec *iov)
   sock = file->private_data;
   sk = sock->sk;
 
-  // from ukl shortcut_tcp_recvmsg
+  // B: from a combination of new_sync_write and sock_write_iter init kiocb and iov
   init_sync_kiocb(&kiocb, file);
   kiocb.ki_pos = 0;
   msg.msg_iocb = &kiocb;
   iov_iter_init(&msg.msg_iter, ITER_DEST, iov, 1,
 		iov->iov_len);
 
-  // FIXME: tcp_recvmsg is not public using sock->ops->recvmsg reaccess cost
-  // JA: FIXME: examine nonblock behaviour might need to update
-  // flags value as this is now set in flags
-  // ret = sock->ops->recvmsg(sock, &msg, iov->iov_len, flags);
+  // C: recieve the message
   ret = tcp_recvmsg(sk, &msg, iov->iov_len, flags, &addr_len);
   return ret;
 }

@@ -2,7 +2,7 @@
 #include <asm/percpu.h>
 #include <asm/asm.h>
 #include <asm/nospec-branch.h>
-#include <asm/ibt.h>
+#include <asm/thread_info.h>
 
 	// HW ERROR CODE is last item pushed on to stack by exception logic
 	// bits are defined as follows for pagefault exception-- from intel manual
@@ -19,7 +19,13 @@
 	.equ RFLAGS_SWAPPED_GS, 1<<29
 	.equ RFLAGS_SWAPPED_GS_MASK, ~(1<<29)
 
+        .equ USER_CS, 0x33
+	.equ USER_SS, 0x2b
 
+	.equ CS_MASK, ~0xff
+	.equ SS_MASK, ~0xff
+	.equ FLAGS_MASK, 0xffffffff00000000
+	.equ ERRCODE_MASK, ~0xff
 
 	.text
 	.align 16
@@ -31,7 +37,7 @@ ef_adaptor_asm_fix_ist_err_code:
 	// if we faulted on a kernel stack we use the stack pointer from the exception frame
 	cld
 	testq $0x8, %rsp
-	jz pf_adaptor_asm_fix_ist_no_err_code
+	jz ef_adaptor_asm_fix_ist_no_err_code
 
 	pushq %rdi
 
@@ -151,8 +157,8 @@ ef_adaptor_asm_fix_ist_err_code:
 
 	.text
 	.align 16
-	.global pf_adaptor_asm_fix_ist_no_err_code
-pf_adaptor_asm_fix_ist_no_err_code:
+	.global ef_adaptor_asm_fix_ist_no_err_code
+ef_adaptor_asm_fix_ist_no_err_code:
 	// This will be executed on an IST stack
 	// we copy the exception frame from the IST stack to the regular kernel stack
 	// if we faulted on a user stack we use tss.rsp0

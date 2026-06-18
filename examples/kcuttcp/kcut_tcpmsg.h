@@ -97,7 +97,7 @@ ssize_t kcut_tcp_read(int fd, void *buf, size_t count)
 static inline
 ssize_t kcut_tcp_write(int fd, void *buf, size_t count)
 {
-   struct iovec iov;
+  struct iovec iov;
   iov.iov_base = (void *)buf;
   iov.iov_len = count;
   int ret;
