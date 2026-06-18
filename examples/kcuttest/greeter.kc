@@ -28,6 +28,7 @@ int greeter_k_stacktouch(void)
   
   return sum;
 }
+EXPORT_SYMBOL(greeter_k_stacktouch);
 
 /*
  * kernel_user_add — back-linkage example.

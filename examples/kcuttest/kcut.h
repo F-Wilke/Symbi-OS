@@ -43,10 +43,6 @@ static inline void kcut_init(void)
   }
 
   printf("KCUT_THRESHOLD set to %d\n", KCUT_THRESHOLD);
-  sym_elevate();
-  printf("kcut_init: current pid %d\n", current_pid()); //this is also makes sure that the kernel module is loaded because current_pid is resolved by ifunc
-  symbi_fast_lower();
-
 #ifndef BRACKET_PRIV
   sym_elevate();
 #endif
