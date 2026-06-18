@@ -46,6 +46,7 @@ int  kcut_tcp_recvmsg(int fd, struct iovec *iov)
   ret = tcp_recvmsg(sk, &msg, iov->iov_len, flags, &addr_len);
   return ret;
 }
+EXPORT_SYMBOL(kcut_tcp_recvmsg);
 
 int kcut_tcp_sendmsg(int fd, struct iovec *iov)
 {
@@ -82,3 +83,4 @@ int kcut_tcp_sendmsg(int fd, struct iovec *iov)
   
   return ret;
 }
+EXPORT_SYMBOL(kcut_tcp_sendmsg);
