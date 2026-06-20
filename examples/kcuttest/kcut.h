@@ -27,26 +27,28 @@
 #define LOWER_ME() 
 #endif
 
-extern int KCUT_THRESHOLD;
+static int KCUT_THRESHOLD=-1;
+
+static inline int kcut_threshold(void)
+{
+  if (KCUT_THRESHOLD >= 0) return KCUT_THRESHOLD; // fast path
+  else {
+    //get threshold from env variable
+    char *env = getenv("KCUT_THRESHOLD");
+    if (env) {
+      KCUT_THRESHOLD = atoi(env);
+    } else {
+      KCUT_THRESHOLD = 20; // default value
+    }
+    return KCUT_THRESHOLD;
+  }
+}
 
 static inline void kcut_init(void)
 {
 #ifdef EVACUATE
   kcut_evacuate(1);
 #endif
-  //get threshold from env variable
-  char *env = getenv("KCUT_THRESHOLD");
-  if (env) {
-    KCUT_THRESHOLD = atoi(env);
-  } else {
-    KCUT_THRESHOLD = 20; // default value
-  }
-
-  printf("KCUT_THRESHOLD set to %d\n", KCUT_THRESHOLD);
-  sym_elevate();
-  printf("kcut_init: current pid %d\n", current_pid()); //this is also makes sure that the kernel module is loaded because current_pid is resolved by ifunc
-  symbi_fast_lower();
-
 #ifndef BRACKET_PRIV
   sym_elevate();
 #endif
