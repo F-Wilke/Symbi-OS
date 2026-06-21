@@ -1521,11 +1521,61 @@ done:
   return rc;
 }
 
+static int
+kldd(int argc, char **argv)
+{
+  kld_secdata sd;
+  char *exec;
+  int rc;
+
+  if (strcmp("kldd",basename(argv[0])) != 0) return 0;
+  
+  if (argc != 2) {
+    fprintf(stderr, "ERROR: no input file\nkldd <file>\n");
+    return -1;
+  }
+  exec = argv[1];
+  
+  rc = kld_open_elf_secdata(&sd, exec, -1, KOTBL_SEC);
+  
+  if (rc>=0) {
+    char *kotbl = (char *)sd.data;
+    size_t size = sd.size, n, nn=0;
+    char *fnm, *modnm, *opts;
+    VLPRINT(2, "%s:%s mapped\n", exec, KOTBL_SEC);
+  
+    while (nn<size) {
+      fnm = modnm = opts = NULL;
+      n = parsekotbl(&(kotbl[nn]), &fnm, &modnm, &opts);
+      if (n == 0) break;
+      nn+=n;
+      printf("%s\n", fnm);
+      if (fnm) free(fnm);
+      if (modnm) free(modnm);
+      if (opts) free(opts);
+    }
+    kld_close_elf_secdata(&sd,-1);
+    rc = 1;
+  } else {
+    rc = -1;
+  }
+
+  return rc;
+}
+
 int
 main(int argc, char **argv)
 {
   FILE *ksfp   = NULL;
   FILE *kotblf = NULL;
+
+  {
+    int rc = kldd(argc, argv);
+    if (rc != 0) {
+      if (rc>0)   return EXIT_SUCCESS;
+      else EEXIT();
+    }
+  }
   
   if (GBLSInit(argc, argv)<0) {
     EEXIT();
