@@ -52,12 +52,12 @@ void * kcut_tcp_sendmsg_thunk(void *targs) {
 static inline
 ssize_t kcut_tcp_read_cpcs_ds(int fd, void *buf, size_t count)
 {
+  int ret;
+  static int kcut_cnt = 0;
   struct iovec iov;
   iov.iov_base = (void *)buf;
   iov.iov_len = count;
-  int ret;
   
-  static int kcut_cnt = 0;
   if (kcut_cnt) {
     ret = kcut_tcp_recvmsg(fd, &iov);
     kcut_cnt--;
@@ -73,10 +73,10 @@ ssize_t kcut_tcp_read_cpcs_ds(int fd, void *buf, size_t count)
 static inline
 ssize_t kcut_tcp_read_hybrid(int fd, void *buf, size_t count)
 {
+  int ret;
   struct iovec iov;
   iov.iov_base = (void *)buf;
   iov.iov_len = count;
-  int ret;
   
 #ifndef BRACKET_PRIV
   static int kcut_cnt = 0;
@@ -114,11 +114,11 @@ ssize_t kcut_tcp_read_hybrid(int fd, void *buf, size_t count)
 static inline
 ssize_t kcut_tcp_write_cpcs_ds(int fd, void *buf, size_t count)
 {
+  int ret;  
+  static int kcut_cnt = 0;
   struct iovec iov;
   iov.iov_base = (void *)buf;
   iov.iov_len = count;
-  int ret;  
-  static int kcut_cnt = 0;
   
   if (kcut_cnt) {
     ret = kcut_tcp_sendmsg(fd, &iov);
@@ -134,11 +134,11 @@ ssize_t kcut_tcp_write_cpcs_ds(int fd, void *buf, size_t count)
 static inline
 ssize_t kcut_tcp_write_hybrid(int fd, void *buf, size_t count)
 {
+  int ret;
   struct iovec iov;
   iov.iov_base = (void *)buf;
   iov.iov_len = count;
-  int ret;
-  
+
 #ifndef BRACKET_PRIV
   static int kcut_cnt = 0;
   if (kcut_cnt) {
