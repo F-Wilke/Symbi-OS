@@ -1,5 +1,5 @@
 diff --git a/Makefile.am b/Makefile.am
-index a7a11ad..2f84fc2 100644
+index a7a11ad..7435b28 100644
 --- a/Makefile.am
 +++ b/Makefile.am
 @@ -88,10 +88,13 @@ if ENABLE_TLS
@@ -27,6 +27,22 @@ index a7a11ad..2f84fc2 100644
  
  # build fails on Darwin with const signature replacements.
  if DARWIN
+@@ -214,6 +219,15 @@ endif
+ 	  done \
+ 	else :; fi
+ 
++memcached$(EXEEXT): $(memcached_OBJECTS) $(memcached_DEPENDENCIES) $(EXTRA_memcached_DEPENDENCIES) 
++	@rm -f memcached$(EXEEXT)
++	$(AM_V_CCLD)$(memcached_LINK) $(memcached_OBJECTS) $(memcached_LDADD) $(LIBS)
++	${KLD} ${KLDFLAGS} -o $@
++
++memcached-debug$(EXEEXT): $(memcached_debug_OBJECTS) $(memcached_debug_DEPENDENCIES) $(EXTRA_memcached_debug_DEPENDENCIES) 
++	@rm -f memcached-debug$(EXEEXT)
++	$(AM_V_CCLD)$(memcached_debug_LINK) $(memcached_debug_OBJECTS) $(memcached_debug_LDADD) $(LIBS)
++	${KLD} ${KLDFLAGS} -o $@
+ docs:
+ 	(cat Doxyfile ; echo "PROJECT_NUMBER=`cat version.num`") | doxygen -
+ 
 diff --git a/memcached.c b/memcached.c
 index 1858d02..308c589 100644
 --- a/memcached.c
