@@ -75,7 +75,6 @@ kcut/memcached.patch:memcached/Makefile.am memcached/memcached.c memcached/threa
 
 
 clean:
-	make -C kcut clean
 	make -C memcached clean
 	-${RM} -rf $(wildcard $(TARGETS))
 
