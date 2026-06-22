@@ -1,12 +1,12 @@
 diff --git a/Makefile.am b/Makefile.am
-index a7a11ad..87989df 100644
+index a7a11ad..2f84fc2 100644
 --- a/Makefile.am
 +++ b/Makefile.am
-@@ -88,15 +88,18 @@ if ENABLE_TLS
+@@ -88,10 +88,13 @@ if ENABLE_TLS
  memcached_SOURCES += tls.c tls.h
  endif
  
-+KCUT_FINAL_FLAGS = -I../../../Symlib/include -I../kcut $(KCUT_CFLAGS)
++KCUT_FINAL_FLAGS = $(KCUT_CFLAGS)
 +
  memcached_debug_SOURCES = $(memcached_SOURCES)
 -memcached_CPPFLAGS = -DNDEBUG
@@ -18,23 +18,15 @@ index a7a11ad..87989df 100644
  
  memcached_LDADD =
  memcached_LDFLAGS =
- memcached_debug_LDFLAGS =
--memcached_DEPENDENCIES =
-+memcached_DEPENDENCIES = ../kcut/libextension.a
- memcached_debug_DEPENDENCIES =
- CLEANFILES=
- 
-@@ -132,6 +135,10 @@ endif
+@@ -131,6 +134,8 @@ memcached_debug_LDADD += vendor/liburing/src/liburing.a
+ endif
  
  memcached_debug_CFLAGS += -DMEMCACHED_DEBUG
++memcached_debug_LDADD += $(KCUT_LDFLAGS)
++memcached_LDADD += $(KCUT_LDFLAGS)
  
-+KCUT_LD_FLAGS =  -L ../kcut -lc -lextension  ../../../Symlib/build/L1/L1.a -lkallsyms
-+memcached_debug_LDADD += $(KCUT_LD_FLAGS)
-+memcached_LDADD += $(KCUT_LD_FLAGS)
-+
  # build fails on Darwin with const signature replacements.
  if DARWIN
- memcached_dtrace.h: memcached_dtrace.d
 diff --git a/memcached.c b/memcached.c
 index 1858d02..308c589 100644
 --- a/memcached.c
