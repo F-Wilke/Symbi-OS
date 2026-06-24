@@ -1,7 +1,8 @@
 KCC    := $(realpath ../tools/kcc)
 KLD    := $(realpath ../tools/src/kld/kld)
 
-KFLAGS       := -K $(realpath ../kcutidt) -K $(realpath ../kcutef) -K $(realpath ../kcutevac)  -K $(realpath ../kcuttcp) -k kcutidt.ko -k kcutef.ko -k kcutevac.ko -k kcuttcp.ko -k /proc/kallsyms
+KALLSYMS_PATH ?= /proc/kallsyms
+KFLAGS       := -S $(KALLSYMS_PATH) -K $(realpath ../kcutidt) -K $(realpath ../kcutef) -K $(realpath ../kcutevac)  -K $(realpath ../kcuttcp) -k kcutidt.ko -k kcutef.ko -k kcutevac.ko -k kcuttcp.ko -k /proc/kallsyms
 KLDFLAGS     := -t $(PWD)/kotbl.bin
 KCUT_CFLAGS  := $(CFLAGS) -D KCUT_TCP -I $(realpath ../kcuttcp) -I $(realpath ../kcuttest) -I $(realpath ../kcutevac)  -I $(realpath ../../Symlib/include) -DDYNLINK
 
@@ -76,7 +77,7 @@ kcut/memcached.patch:memcached/Makefile.am memcached/memcached.c memcached/threa
 
 clean:
 	make -C memcached clean
-	-${RM} -rf $(wildcard $(TARGETS))
+	-${RM} -rf $(wildcard $(TARGETS) libkern.so kotbl.ko)
 
 distclean: 
 	-${RM} -rf $(wildcard memcached)
