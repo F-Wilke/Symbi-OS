@@ -1,5 +1,6 @@
 ext
 kld
+kldd
 listlibs
 mklibstubs
 readsymtbl

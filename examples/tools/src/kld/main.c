@@ -9,6 +9,7 @@ globals_t GBLS = {
   .dirs           = NULL,
   .fsname         = FSNAME_DFLT,
   .libkernpath    = NULL,
+  .kallsymspath   = NULL,
   .pid            = 0,
   .dirc           = 0,
   .dirmax         = 0,
@@ -22,13 +23,15 @@ static void
 usage(char *name, FILE *fp)
 {
   fprintf(fp,
-	  "%s [-h] [-v] [-O lib] [-t kotbl path] [-K dir] "
+	  "%s [-h] [-v] [-O lib] [-S kallsyms file] [-t kotbl path] [-K dir] "
 	  "[-k kofile[,modnm[,kldopts]]] "
 	  "[-o exe] [Elf]\n"
 	  "   -h     : print this usage message\n"
 	  "   -v     : verbose operation\n"
 	  "   -O lib : create kernel so as lib for %s "
 	  "(default:%s) implys '-k %s' (see below).\n"
+	  "   -S kallysms file : used to specify an alternative file to read kernel symbols from.\n"
+	  "   -t kotbl path : path to put kotbl file default (kotbl.bin)\n"
 	  "   -K dir : add a directory to search for ko files"
 	  " (can be repeated)\n"
 	  "   -k ko  : create a shared libk library for the ko "
@@ -438,7 +441,7 @@ GBLSInit(int argc, char **argv)
   }
   addDir(GBLS.cwd);
   
-  while ((opt = getopt(argc, argv, "K:k:O:o:t:hv")) != -1) {
+  while ((opt = getopt(argc, argv, "K:k:O:o:S:t:hv")) != -1) {
     switch (opt) {
     case 'K':
       addDir(optarg);
@@ -468,6 +471,9 @@ GBLSInit(int argc, char **argv)
 	kospec[kospecc] = optarg;
 	kospecc++;
       }
+      break;
+    case 'S':
+      GBLS.kallsymspath = optarg;
       break;
     case 't':
       GBLS.kotblfile = optarg;
@@ -639,10 +645,15 @@ int mkpath(const char *path, mode_t mode) {
 #endif
 
 static int
-openKallsyms(FILE **fp)
+openKallsyms(FILE **fp, char *path)
 {
   FILE      *fp_;
-  fp_ = fopen(KALLSYMSPATH, "r");
+
+  if (path) {
+    fp_ = fopen(path, "r");
+  } else {
+    fp_ = fopen(KALLSYMSPATH, "r");
+  }
   if (fp_ == NULL) {
     warn(__FUNCTION__);
     return -1;
@@ -938,7 +949,7 @@ fast_precheck_runtime_skip(int *all_skip)
     HASH_ADD_KEYPTR(hh, m, x->name, strlen(x->name), x);
   }
 
-  if (openKallsyms(&fp) < 0) goto done;
+  if (openKallsyms(&fp, NULL) < 0) goto done;
   while (getline(&line, &len, fp) != -1) {
     mod_start = mod_end = 0;
     n = sscanf(line, "%" SCNxPTR " %c %*s %n%*s%n", &addr, &type,
@@ -1521,11 +1532,61 @@ done:
   return rc;
 }
 
+static int
+kldd(int argc, char **argv)
+{
+  kld_secdata sd;
+  char *exec;
+  int rc;
+
+  if (strcmp("kldd",basename(argv[0])) != 0) return 0;
+  
+  if (argc != 2) {
+    fprintf(stderr, "ERROR: no input file\nkldd <file>\n");
+    return -1;
+  }
+  exec = argv[1];
+  
+  rc = kld_open_elf_secdata(&sd, exec, -1, KOTBL_SEC);
+  
+  if (rc>=0) {
+    char *kotbl = (char *)sd.data;
+    size_t size = sd.size, n, nn=0;
+    char *fnm, *modnm, *opts;
+    VLPRINT(2, "%s:%s mapped\n", exec, KOTBL_SEC);
+  
+    while (nn<size) {
+      fnm = modnm = opts = NULL;
+      n = parsekotbl(&(kotbl[nn]), &fnm, &modnm, &opts);
+      if (n == 0) break;
+      nn+=n;
+      printf("%s\n", fnm);
+      if (fnm) free(fnm);
+      if (modnm) free(modnm);
+      if (opts) free(opts);
+    }
+    kld_close_elf_secdata(&sd,-1);
+    rc = 1;
+  } else {
+    rc = -1;
+  }
+
+  return rc;
+}
+
 int
 main(int argc, char **argv)
 {
   FILE *ksfp   = NULL;
   FILE *kotblf = NULL;
+
+  {
+    int rc = kldd(argc, argv);
+    if (rc != 0) {
+      if (rc>0)   return EXIT_SUCCESS;
+      else EEXIT();
+    }
+  }
   
   if (GBLSInit(argc, argv)<0) {
     EEXIT();
@@ -1612,7 +1673,7 @@ main(int argc, char **argv)
   // we do this last so that ko loads will be reflected in so updates
     if (GBLS.prockallsyms) {
       char *kernpath;
-      if (openKallsyms(&ksfp)<0) {
+      if (openKallsyms(&ksfp, GBLS.kallsymspath)<0) {
       fprintf(stderr, "ERROR: failed to open kallsyms\n");
       EEXIT();
     }

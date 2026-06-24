@@ -5,8 +5,6 @@
 #include <sys/uio.h>
 #include "kcut_tcpmsg.kh"
 
-extern int KCUT_THRESHOLD;
-
 #ifndef SHORTCUT
 #define SHORTCUT 1
 #endif
@@ -87,7 +85,7 @@ ssize_t kcut_tcp_read(int fd, void *buf, size_t count)
     kcut_cnt--;
   } else {
     ret = read(fd, buf, count);
-    kcut_cnt = KCUT_THRESHOLD;
+    kcut_cnt = kcut_threshold();
   }
 #endif
   
@@ -128,7 +126,7 @@ ssize_t kcut_tcp_write(int fd, void *buf, size_t count)
     kcut_cnt--;
   } else {
     ret = write(fd, buf, count);
-    kcut_cnt = KCUT_THRESHOLD;
+    kcut_cnt = kcut_threshold();
   }
 #endif
   
