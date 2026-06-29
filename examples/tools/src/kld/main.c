@@ -16,7 +16,8 @@ globals_t GBLS = {
   .verbose        = 0,
   .startfs        = 0,
   .prockallsyms   = 0,
-  .procbos        = 1
+  .procbos        = 1,
+  .resetinterp    = 0
 };
 
 static void
@@ -42,6 +43,9 @@ usage(char *name, FILE *fp)
 	  "                      are UNDEF, enabling runtime resolution\n"
 	  "            and set PT_INTERP to %s while storing original\n"
 	  "            interpreter in %s\n"
+	  "   -R     : for executable argument, toggle interpreter:\n"
+	  "            if current is %s, restore from %s (required)\n"
+	  "            otherwise install %s\n"
 	  "   elf    : optional elf file to process as follows:\n"
 	  "              For each libk found in the elf:\n"
 	  "                 find coresponding ko and load it\n"
@@ -52,7 +56,9 @@ usage(char *name, FILE *fp)
 	  "                 update the libk symbol table with runtime"
 	  " addresses\n",
 	  basename(name), KALLSYMSPATH, LIBKERNPATH_DFLT, KALLSYMSPATH,
-	  TOSTRING(KLDSO_PATH_DFLT), KOTBL_INTERP_SEC);
+	  TOSTRING(KLDSO_PATH_DFLT), KOTBL_INTERP_SEC,
+	  TOSTRING(KLDSO_PATH_DFLT), KOTBL_INTERP_SEC,
+	  TOSTRING(KLDSO_PATH_DFLT));
 }
 
 struct KLDOPT_DESC {
@@ -441,7 +447,7 @@ GBLSInit(int argc, char **argv)
   }
   addDir(GBLS.cwd);
   
-  while ((opt = getopt(argc, argv, "K:k:O:o:S:t:hv")) != -1) {
+  while ((opt = getopt(argc, argv, "K:k:O:o:RS:t:hv")) != -1) {
     switch (opt) {
     case 'K':
       addDir(optarg);
@@ -471,6 +477,9 @@ GBLSInit(int argc, char **argv)
 	kospec[kospecc] = optarg;
 	kospecc++;
       }
+      break;
+    case 'R':
+      GBLS.resetinterp = 1;
       break;
     case 'S':
       GBLS.kallsymspath = optarg;
@@ -1368,7 +1377,6 @@ maybe_install_kldso_interp(const char *exe)
   char interp[PATH_MAX] = {0};
   if (kld_get_interp(exe, interp, sizeof(interp)) < 0) return;
   if (strcmp(interp, TOSTRING(KLDSO_PATH_DFLT)) == 0) return;
-
   kld_add_elf_section(exe, KOTBL_INTERP_SEC, interp, strlen(interp) + 1);
   if (kld_set_interp(exe, TOSTRING(KLDSO_PATH_DFLT)) < 0) {
     fprintf(stderr, "WARNING: failed to set interpreter for %s\n", exe);
@@ -1388,6 +1396,20 @@ get_exec_orig_interp(const char *exe, char *buf, size_t bufsz)
     if (buf[0]) return 0;
   }
   return kld_get_interp(exe, buf, bufsz);
+}
+
+/* Strict version for -R: requires KOTBL_INTERP_SEC to be present and non-empty. */
+static int
+get_exec_saved_orig_interp(const char *exe, char *buf, size_t bufsz)
+{
+  kld_secdata sd;
+  if (kld_open_elf_secdata(&sd, exe, -1, KOTBL_INTERP_SEC) < 0) return -1;
+  size_t n = sd.size;
+  if (n >= bufsz) n = bufsz - 1;
+  memcpy(buf, sd.data, n);
+  buf[n] = '\0';
+  kld_close_elf_secdata(&sd, -1);
+  return (buf[0] != '\0') ? 0 : -1;
 }
 
 /* read_file_buf - read an entire file into a malloc'd buffer.
@@ -1583,7 +1605,7 @@ main(int argc, char **argv)
   {
     int rc = kldd(argc, argv);
     if (rc != 0) {
-      if (rc>0)   return EXIT_SUCCESS;
+      if (rc>0) return EXIT_SUCCESS;
       else EEXIT();
     }
   }
@@ -1601,23 +1623,71 @@ main(int argc, char **argv)
 
   if (GBLS.executable) {
     char *ldpath = NULL;
+    char originterp[PATH_MAX] = {0};
     char interp[PATH_MAX] = {0};
-    prcExec(GBLS.executable, 0, &ldpath);
-    if (get_exec_orig_interp(GBLS.executable, interp, sizeof(interp)) == 0) {
-      char *execpath = realpath(GBLS.executable, NULL);
-      const char *ep = execpath ? execpath : GBLS.executable;
-      const char *lp = (ldpath && ldpath[0]) ? ldpath : "";
-      /* Structured output for kldso.sh: interp\0execpath\0ldpath\0 */
-      fwrite(interp, 1, strlen(interp), stdout);
-      fwrite("\0",1, 1, stdout);
-      fwrite(ep, 1, strlen(ep), stdout);
-      fwrite("\0",1, 1, stdout);
-      fwrite(lp, 1, strlen(lp), stdout);
-      fwrite("\0",1, 1, stdout);
-      if (execpath) free(execpath);
+    if (GBLS.resetinterp) {
+      int have_saved_orig = 0;
+      if (kld_get_interp(GBLS.executable, interp, sizeof(interp)) == 0) {
+	printf("current interpreter: %s\n", interp);
+      } else {
+	fprintf(stderr, "ERROR: failed to determine interpreter"
+		" for %s\n", GBLS.executable);
+	EEXIT();
+      }
+
+      if (strcmp(interp, TOSTRING(KLDSO_PATH_DFLT)) == 0) {
+	if (get_exec_saved_orig_interp(GBLS.executable, originterp, sizeof(originterp)) == 0) {
+	  have_saved_orig = 1;
+	  printf("original interpreter: %s\n", originterp);
+	} else {
+	  fprintf(stderr, "ERROR: missing %s in %s; cannot restore from %s\n",
+		  KOTBL_INTERP_SEC, GBLS.executable, TOSTRING(KLDSO_PATH_DFLT));
+	  EEXIT();
+	}
+	printf("Restoring original interpreter.\n");
+	if (kld_set_interp(GBLS.executable, originterp) < 0) {
+	  fprintf(stderr, "ERROR: failed to set %s as interpreter\n",
+		  originterp);
+	  EEXIT();
+	}
+      } else {
+	if (get_exec_saved_orig_interp(GBLS.executable, originterp, sizeof(originterp)) == 0) {
+	  have_saved_orig = 1;
+	  printf("original interpreter: %s\n", originterp);
+	}
+	if (have_saved_orig && strcmp(interp, originterp) != 0) {
+	  fprintf(stderr,
+		  "WARNING: don't recognize current interpreter %s (saved original %s)\n",
+		  interp, originterp);
+	  EEXIT();
+	}
+	printf("Installing %s as interpreter\n",
+	       TOSTRING(KLDSO_PATH_DFLT));
+	if (kld_set_interp(GBLS.executable, TOSTRING(KLDSO_PATH_DFLT)) < 0) {
+	  fprintf(stderr, "ERROR: failed to set %s as interpreter\n",
+		  TOSTRING(KLDSO_PATH_DFLT));
+	  EEXIT();
+	}
+      }
+      return EXIT_SUCCESS;
     } else {
-      fprintf(stderr, "ERROR: failed to determine interpreter for %s\n",
-              GBLS.executable);
+      prcExec(GBLS.executable, 0, &ldpath);
+      if (get_exec_orig_interp(GBLS.executable, interp, sizeof(interp)) == 0) {
+	char *execpath = realpath(GBLS.executable, NULL);
+	const char *ep = execpath ? execpath : GBLS.executable;
+	const char *lp = (ldpath && ldpath[0]) ? ldpath : "";
+	/* Structured output for kldso.sh: interp\0execpath\0ldpath\0 */
+	fwrite(interp, 1, strlen(interp), stdout);
+	fwrite("\0",1, 1, stdout);
+	fwrite(ep, 1, strlen(ep), stdout);
+	fwrite("\0",1, 1, stdout);
+	fwrite(lp, 1, strlen(lp), stdout);
+	fwrite("\0",1, 1, stdout);
+	if (execpath) free(execpath);
+      } else {
+	fprintf(stderr, "ERROR: failed to determine interpreter for %s\n",
+		GBLS.executable);
+      }
     }
     if (ldpath) free(ldpath);
   } else if (no_kflags) {
