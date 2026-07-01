@@ -17,8 +17,11 @@ TARGETS+=valkey/src/valkey-server-cpcs-evac-ds-clean
 
 all: $(TARGETS)
 
-libkern.so kotbl.bin:
-	${KLD} ${KFLAGS}
+cachedkallsyms:
+	cp /proc/kallsyms cachedkallsyms
+
+libkern.so kotbl.bin: cachedkallsyms
+	${KLD} -S cachedkallsyms ${KFLAGS}
 	cp libkern.so ./libkern.valkey.so
 
 valkey/src/valkey-server-cpcs: valkey/Makefile libkern.so kotbl.bin
