@@ -67,6 +67,7 @@ typedef struct {
   int       startfs;        // boolean start fs interface 
   int       prockallsyms;   // boolean create so for kallsyms
   int       procbos;        // boolean create so's for all named bo's
+  int       resetinterp;    // indicates we are to rest the interpret
 } globals_t;
 extern globals_t GBLS;
 

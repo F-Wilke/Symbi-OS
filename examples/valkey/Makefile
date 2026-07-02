@@ -8,7 +8,7 @@ KCUT_CFLAGS  := $(CFLAGS) -D KCUT_TCP -I $(realpath ../kcuttcp) -I $(realpath ..
 # kludge to avoid symbol conflict with libkern -- until we add support to kld to filter conflicting symbols (eg black or white list apparoch)
 
 KCUT_CFLAGS  += -Dmodules=valkey_modules
-KCUT_LDFLAGS := -lc  $(realpath ../../Symlib/build/L1/L1.a)  -L $(realpath ../kcuttcp) -L $(realpath ../kcutevac) -L$(realpath .) -lkcuttcp -l kcutevac -lkern 
+KCUT_LDFLAGS := -lc  $(realpath ../../Symlib/build/L1/L1.a)  -L $(realpath ../kcuttcp) -L $(realpath ../kcutevac) -L$(realpath .) -lkcuttcp -l kcutevac -lkern
 
 .PHONY: clean distclean
 TARGETS=valkey/src/valkey-server-cpcs valkey/src/valkey-server-bpcs valkey/src/valkey-server-cpbs valkey/src/valkey-server-bpbs
@@ -18,8 +18,11 @@ TARGETS+=valkey/src/valkey-server-cpcs-evac-ds-clean
 
 all: $(TARGETS)
 
-libkern.so kotbl.bin:
-	${KLD} ${KFLAGS}
+cachedkallsyms:
+	cp /proc/kallsyms cachedkallsyms
+
+libkern.so kotbl.bin: cachedkallsyms
+	${KLD} -S cachedkallsyms ${KFLAGS}
 	cp libkern.so ./libkern.valkey.so
 
 valkey/src/valkey-server-cpcs: valkey/Makefile libkern.so kotbl.bin
@@ -100,7 +103,7 @@ kcut/valkey.patch:valkey/src/Makefile valkey/src/socket.c valkey/src/server.c
 	cd valkey && git diff > ../kcut/valkey.patch
 
 clean:
-	make -C valkey clean
+	-make -C valkey clean
 	-${RM} -rf $(wildcard $(TARGETS) libkern.so kotbl.ko)
 
 distclean: clean
