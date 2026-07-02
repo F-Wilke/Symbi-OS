@@ -59,6 +59,7 @@ typedef struct {
   char **   dirs;           // directory search array 
   char *    fsname;         // default name for file system mount poinxot dirname
   char *    libkernpath;    // name for lib kernel so
+  char *    kallsymspath;   // path used to overide where to read kernel symbols from
   pid_t     pid;            // pid of this process (useful for fs interface)
   int       dirc;           // count of ko entries in bo directory search array
   int       dirmax;         // maximum size of bo directory seaarch array 
@@ -66,6 +67,7 @@ typedef struct {
   int       startfs;        // boolean start fs interface 
   int       prockallsyms;   // boolean create so for kallsyms
   int       procbos;        // boolean create so's for all named bo's
+  int       resetinterp;    // indicates we are to rest the interpret
 } globals_t;
 extern globals_t GBLS;
 

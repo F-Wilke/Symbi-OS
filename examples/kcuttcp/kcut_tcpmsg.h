@@ -5,8 +5,6 @@
 #include <sys/uio.h>
 #include "kcut_tcpmsg.kh"
 
-extern int KCUT_THRESHOLD;
-
 #ifndef SHORTCUT
 #define SHORTCUT 1
 #endif
@@ -51,15 +49,34 @@ void * kcut_tcp_sendmsg_thunk(void *targs) {
 #endif
 }
 
-
-// read / write compatible interface
 static inline
-ssize_t kcut_tcp_read(int fd, void *buf, size_t count)
+ssize_t kcut_tcp_read_cpcs_ds(int fd, void *buf, size_t count)
 {
+  int ret;
+  static int kcut_cnt = 0;
   struct iovec iov;
   iov.iov_base = (void *)buf;
   iov.iov_len = count;
+  
+  if (kcut_cnt) {
+    ret = kcut_tcp_recvmsg(fd, &iov);
+    kcut_cnt--;
+  } else {
+    ret = read(fd, buf, count);
+    kcut_cnt = kcut_threshold();
+  }
+  
+  return ret;
+}
+
+// read / write compatible interface
+static inline
+ssize_t kcut_tcp_read_hybrid(int fd, void *buf, size_t count)
+{
   int ret;
+  struct iovec iov;
+  iov.iov_base = (void *)buf;
+  iov.iov_len = count;
   
 #ifndef BRACKET_PRIV
   static int kcut_cnt = 0;
@@ -87,7 +104,7 @@ ssize_t kcut_tcp_read(int fd, void *buf, size_t count)
     kcut_cnt--;
   } else {
     ret = read(fd, buf, count);
-    kcut_cnt = KCUT_THRESHOLD;
+    kcut_cnt = kcut_threshold();
   }
 #endif
   
@@ -95,13 +112,33 @@ ssize_t kcut_tcp_read(int fd, void *buf, size_t count)
 }
 
 static inline
-ssize_t kcut_tcp_write(int fd, void *buf, size_t count)
+ssize_t kcut_tcp_write_cpcs_ds(int fd, void *buf, size_t count)
 {
+  int ret;  
+  static int kcut_cnt = 0;
   struct iovec iov;
   iov.iov_base = (void *)buf;
   iov.iov_len = count;
-  int ret;
   
+  if (kcut_cnt) {
+    ret = kcut_tcp_sendmsg(fd, &iov);
+    kcut_cnt--;
+  } else {
+    ret = write(fd, buf, count);
+    kcut_cnt = kcut_threshold();
+  }
+  return ret;  
+}
+
+
+static inline
+ssize_t kcut_tcp_write_hybrid(int fd, void *buf, size_t count)
+{
+  int ret;
+  struct iovec iov;
+  iov.iov_base = (void *)buf;
+  iov.iov_len = count;
+
 #ifndef BRACKET_PRIV
   static int kcut_cnt = 0;
   if (kcut_cnt) {
@@ -128,11 +165,19 @@ ssize_t kcut_tcp_write(int fd, void *buf, size_t count)
     kcut_cnt--;
   } else {
     ret = write(fd, buf, count);
-    kcut_cnt = KCUT_THRESHOLD;
+    kcut_cnt = kcut_threshold();
   }
 #endif
   
   return ret;  
 }
+
+#ifdef USE_KCUT_TCPMSG_CPCS_DS_FUNCS
+#define kcut_tcp_write kcut_tcp_write_cpcs_ds
+#define kcut_tcp_read  kcut_tcp_read_cpcs_ds
+#else
+#define kcut_tcp_write kcut_tcp_write_hybrid
+#define kcut_tcp_read  kcut_tcp_read_hybrid
+#endif
 
 #endif  // KCUT_TCPMSG_H
