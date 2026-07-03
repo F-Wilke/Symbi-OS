@@ -1,0 +1,5 @@
+
+extern void* nmi_adaptor_asm_exc_nmi;
+
+
+

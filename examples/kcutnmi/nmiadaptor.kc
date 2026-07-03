@@ -1,0 +1,27 @@
+#include <linux/printk.h> 
+
+#include "nmiadaptor.kh"
+
+void* nmi_adaptor_asm_exc_nmi;
+
+
+#define DEBUG
+
+#ifdef DEBUG
+extern int nmi_asm_debug(int normalNMI);
+
+int extension_init(void)
+{
+    //try normal nmi, expect retval 0
+    int retVal;
+    retVal = nmi_asm_debug(1);
+    pr_info("nmi_asm_debug(1): %d, expected 0", retVal);
+    
+    //try IST7 nmi, expect retval 1
+    retVal = nmi_asm_debug(0);
+    pr_info("nmi_asm_debug(0): %d, expected 1", retVal);
+
+    return 0;
+}
+
+#endif
