@@ -8,7 +8,6 @@
 #define KOTBL_SEC        ".kotbl"
 #define KOTBL_DFLT       "kotbl.bin"
 #define KOTBL_INTERP_SEC ".interp_orig"
-#define FSNAME_DFLT      "libk"
 #define PATHPREFIX_DFLT  (NULL)
 #define LIBKERNPATH_DFLT "libkern.so"
 #ifndef KLDSO_PATH_DFLT
@@ -49,25 +48,21 @@ typedef struct {
   
 typedef struct {
   char      cwd[PATH_MAX];  // pwd 
-  fs_t      fs;             // synthetic file system object
-  sigproc_t sigproc;        // signal procesing object
   bo_t *    bosbypath;      // hash table of binary objects (by path)
   bo_t *    bosbymod;       // hash table of binary objects (by modnm)
   char *    executable;     // path of executable if one was specified (runtime)
   char *    buildexe;       // path of executable to patch at build time (-o flag)
   char *    kotblfile;      // path of kernel object table file to create
   char **   dirs;           // directory search array 
-  char *    fsname;         // default name for file system mount poinxot dirname
   char *    libkernpath;    // name for lib kernel so
   char *    kallsymspath;   // path used to overide where to read kernel symbols from
-  pid_t     pid;            // pid of this process (useful for fs interface)
   int       dirc;           // count of ko entries in bo directory search array
   int       dirmax;         // maximum size of bo directory seaarch array 
   int       verbose;        // verbosity level
-  int       startfs;        // boolean start fs interface 
   int       prockallsyms;   // boolean create so for kallsyms
   int       procbos;        // boolean create so's for all named bo's
   int       resetinterp;    // indicates we are to rest the interpret
+  int       noexec;         // -N: print exec info instead of execve'ing
 } globals_t;
 extern globals_t GBLS;
 

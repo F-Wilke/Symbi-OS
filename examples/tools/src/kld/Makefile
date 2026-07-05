@@ -1,36 +1,48 @@
-KLD_SRCS   := main.c kldfs.c fs.c sigproc.c kldelf.c modinfo.c loadbo.c
-KLD_OBJS   := $(KLD_SRCS:%.c=%.o)
+SRCS       := main.c kldelf.c modinfo.c loadbo.c runtime_kotbl.c module_patch.c
+OBJS       := $(SRCS:%.c=%.o)
 O          := 0
-CFLAGS     += -g -O${O} -std=gnu99 -MD -MP -Wall -Werror $(shell pkg-config fuse3 --cflags) 
-KLDSO_SH_PATH ?= $(realpath .)/kldso.sh
+# Find .c files not overridden locally from the parent directory
+vpath %.c ..
+vpath %.h ..
+CFLAGS     += -g -O${O} -std=gnu99 -MD -MP -Wall -Werror
+CFLAGS     += -I. -I..
 KLDSO_PATH ?= $(realpath .)/kld.so
-KLDSO_CFLAGS := -O2 -g -DKLDD_SH_PATH=$(KLDSO_SH_PATH) -fno-builtin -fno-stack-protector -nostdlib -MD
-TARGETS    := kld.so kld kldd readsymtbl listlibs stubstest kerntest
+KLDSO_CFLAGS := -O2 -g -fno-builtin -fno-stack-protector -nostdlib -MD
+TARGETS    := kld kldd kld.so readsymtbl listlibs stubstest kerntest
 UTHASHREPO := git@github.com:troydhanson/uthash.git
 UTHASHDIR  := ext/uthash
 UTHASHINCS  = ${UTHASHDIR}/include
 
 CFLAGS     += -I${UTHASHINCS} -DKLDSO_PATH_DFLT=$(KLDSO_PATH)
-LDFLAGS    += $(shell pkg-config fuse3 --cflags --libs) -lelf
+LDFLAGS    += -lelf
 EXTFILES    = ${UTHASHINCS}/uthash.h
 
 .PHONY: clean distclean
 
 all: ${EXTFILES} ${TARGETS} 
 
+kld: ${OBJS}
+	${CC} ${CFLAGS} -o $@ $^ ${LDFLAGS} 
+
 kldd: kld
-	ln -s kld kldd
+	ln -sf kld kldd
 
-kld: kld.so ${KLD_OBJS}
-	${CC} ${CFLAGS} -o $@ ${KLD_OBJS} ${LDFLAGS} 
-
-kld.so: kldso_entry.o kldso.o
+kld.so: kldso_entry.o kldso.o runtime_kotbl_nostd.o module_patch_nostd.o runtime_prepare_nostd.o
 	${LD} -g -o $@ $^
 
 kldso_entry.o: kldso_entry.S
 	${AS} -g -o $@ $<
 
 kldso.o: kldso_main.c
+	${CC} ${KLDSO_CFLAGS} -c -o $@ $<
+
+runtime_kotbl_nostd.o: runtime_kotbl.c runtime_kotbl.h
+	${CC} ${KLDSO_CFLAGS} -c -o $@ $<
+
+module_patch_nostd.o: module_patch.c module_patch.h
+	${CC} ${KLDSO_CFLAGS} -c -o $@ $<
+
+runtime_prepare_nostd.o: runtime_prepare.c runtime_prepare.h
 	${CC} ${KLDSO_CFLAGS} -c -o $@ $<
 
 ${UTHASHINCS}/uthash.h:
@@ -76,5 +88,3 @@ distclean: clean
 	-${RM} rf -rf $(wildcard ext)
 
 -include $(wildcard *.d)
-
-
