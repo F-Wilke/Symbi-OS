@@ -76,14 +76,6 @@ static inline long sys_delete_module(const char *name, unsigned int flags) {
     return ret;
 }
 
-static inline long sys_finit_module(int fd, const char *param_values, int flags) {
-    long ret;
-    asm volatile ("syscall" : "=a"(ret)
-                  : "a"(SYS_finit_module), "D"(fd), "S"(param_values), "d"(flags)
-                  : "rcx", "r11", "memory");
-    return ret;
-}
-
 static inline long sys_init_module(void *image, unsigned long len, const char *param_values) {
     long ret;
     asm volatile ("syscall" : "=a"(ret)
@@ -120,39 +112,6 @@ static inline long sys_rename(const char *oldpath, const char *newpath) {
     long ret;
     asm volatile ("syscall" : "=a"(ret)
                   : "a"(SYS_rename), "D"(oldpath), "S"(newpath)
-                  : "rcx", "r11", "memory");
-    return ret;
-}
-
-static inline long sys_dup2(int oldfd, int newfd) {
-    long ret;
-    asm volatile ("syscall" : "=a"(ret)
-                  : "a"(SYS_dup2), "D"(oldfd), "S"(newfd)
-                  : "rcx", "r11", "memory");
-    return ret;
-}
-
-static inline long sys_pipe2(int fds[2], int flags) {
-    long ret;
-    asm volatile ("syscall" : "=a"(ret)
-                  : "a"(SYS_pipe2), "D"(fds), "S"(flags)
-                  : "rcx", "r11", "memory");
-    return ret;
-}
-
-static inline long sys_fork(void) {
-    long ret;
-    asm volatile ("syscall" : "=a"(ret)
-                  : "a"(SYS_fork)
-                  : "rcx", "r11", "memory");
-    return ret;
-}
-
-static inline long sys_wait4(int pid, int *status, int options, void *rusage) {
-    long ret;
-    register long r10 __asm__("r10") = (long)rusage;
-    asm volatile ("syscall" : "=a"(ret)
-                  : "a"(SYS_wait4), "D"(pid), "S"(status), "d"(options), "r"(r10)
                   : "rcx", "r11", "memory");
     return ret;
 }
@@ -274,6 +233,8 @@ static int inject_ldpath_env(char **envp, const char *ldpath, int debug) {
 
     for (int i = 0; envp[i]; i++) {
         if (starts_with(envp[i], "PWD=") ||
+            starts_with(envp[i], "OLDPWD=") ||
+            starts_with(envp[i], "PWD=") ||
             starts_with(envp[i], "OLDPWD=") ||
             starts_with(envp[i], "SHLVL=") ||
             starts_with(envp[i], "_=")) {
@@ -1108,7 +1069,7 @@ static int update_so_dynsym_simple(const char *so_path, const SymEnt *syms, int 
         if (sym_updates > 0) debug_write(debug, " (dynsym+symtab)");
         debug_write(debug, "\n");
     }
-    return (dyn_updates > 0) ? 0 : -1;
+    return (dyn_updates > 0 || sym_updates > 0) ? 0 : -1;
 }
 
 static int parse_kotbl_modules(const char *target_path, ModEnt **mods_out, int *mod_n_out, char **libkern_so_out) {
@@ -1322,7 +1283,12 @@ int collect_and_apply_runtime_symbols(const char *target_path, int debug) {
             }
         }
         if (do_update) {
-            if (update_so_dynsym_simple(libkern_so, ksyms, kn, debug) < 0) rc = -1;
+            if (update_so_dynsym_simple(libkern_so, ksyms, kn, debug) < 0) {
+                if (debug) {
+                    debug_write(debug, "[KLD.SO]: update: in-place update failed; rebuild fallback unavailable in standalone mode\n");
+                }
+                rc = -1;
+            }
             else if (have_boot_id) write_stamp_for_path("libkern", libkern_so, boot_id, kanchor, khash);
         }
     }
@@ -1360,7 +1326,12 @@ int collect_and_apply_runtime_symbols(const char *target_path, int debug) {
             }
         }
         if (do_update) {
-            if (update_so_dynsym_simple(mods[i].so_path, mods[i].syms, mods[i].sym_n, debug) < 0) rc = -1;
+            if (update_so_dynsym_simple(mods[i].so_path, mods[i].syms, mods[i].sym_n, debug) < 0) {
+                if (debug) {
+                    debug_write(debug, "[KLD.SO]: update: in-place update failed; rebuild fallback unavailable in standalone mode\n");
+                }
+                rc = -1;
+            }
             else if (have_boot_id) write_stamp_for_path("mod", mods[i].so_path, boot_id, manchor, mhash);
         }
     }
