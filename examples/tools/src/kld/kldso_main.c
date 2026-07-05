@@ -234,6 +234,19 @@ static int inject_ldpath_env(char **envp, const char *ldpath, int debug) {
     for (int i = 0; envp[i]; i++) {
         if (starts_with(envp[i], "PWD=") ||
             starts_with(envp[i], "OLDPWD=") ||
+            starts_with(envp[i], "SHLVL=") ||
+            starts_with(envp[i], "_=")) {
+            envp[i] = ld_env;
+            if (debug) {
+                debug_write(debug, "[KLD.SO]: env: injected LD_LIBRARY_PATH via low-impact env slot\n");
+            }
+            return 0;
+        }
+    }
+
+    for (int i = 0; envp[i]; i++) {
+        if (starts_with(envp[i], "PWD=") ||
+            starts_with(envp[i], "OLDPWD=") ||
             starts_with(envp[i], "PWD=") ||
             starts_with(envp[i], "OLDPWD=") ||
             starts_with(envp[i], "SHLVL=") ||

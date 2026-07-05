@@ -159,29 +159,6 @@ openso(char *kofnm, char *modnm, char **sofullpath, int readonly)
 }
 
 
-#if 0
-// not used
-// if you want to support using the file name as a default
-// then resurrect 
-static char
-*modnmfromfnm(char *fnm)
-{
-  char *tmp   = strdup(fnm);
-  char *base  = basename(tmp);
-  char *modnm = NULL;
-  int      i = 0;
-
-  for (i=0; base[i]!='\0'; i++);
-  // remove '.ko' extension 
-  if (i>3 && base[i-3]=='.' && base[i-2]=='k' && base[i-1]=='o') {
-    base[i-3]='\0';
-  }
-  modnm = strdup(base);  // make a copy in new memory to pass back
-  free(tmp);
-  return modnm;
-}
-#endif
-
 static int
 parsekospec(const char *kospec, char **fnm, char **kldopts,
 	    char **modnm)
@@ -253,7 +230,7 @@ newbo(char *kofullpath, char *modnm, char *komodnm, int forcemodnm,
   return bo;
 }
 
-__attribute__((unused)) static void
+static void
 deletebo(bo_t *bo)
 {
   if (bo) {
@@ -588,40 +565,6 @@ writeso(const char *path, int fd, const kld_sym *entries, size_t n,
   close(mfd);
   return rc;
 }
-
-#if 0
-/** FROM: Gemini
- * Creates directories recursively for a given path.
- * Returns 0 on success, -1 on failure.
- */
-static
-int mkpath(const char *path, mode_t mode) {
-    char *temp_path = strdup(path);
-    if (!temp_path) return -1;
-
-    for (char *p = temp_path + 1; *p; p++) {
-        if (*p == '/') {
-            *p = '\0'; // Temporarily truncate at current directory level
-            if (mkdir(temp_path, mode) == -1 && errno != EEXIST) {
-                free(temp_path);
-                return -1;
-            }
-            *p = '/'; // Restore delimiter
-        }
-    }
-    mode_t old_mask = umask(0);
-    // Create the final level
-    if (mkdir(temp_path, mode) == -1 && errno != EEXIST) {
-        free(temp_path);
-	umask(old_mask);
-        return -1;
-    }
-    umask(old_mask);
-    free(temp_path);
-    return 0;
-}
-/****/
-#endif
 
 static int
 openKallsyms(FILE **fp, char *path)
