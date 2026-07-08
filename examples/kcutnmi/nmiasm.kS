@@ -20,7 +20,7 @@ nmi_asm_check_ist7:
     lea cpu_tss_rw(%rip), %rdi
 	movq %gs:TSS_IST7(%rdi), %rdi
 
-    sub %rsp, %rdi // rdi = rdi - rsp
+    sub 0x20(%rsp), %rdi // rdi = rdi - rsp
     //we're on ist7 if 0 <= rdi <= 0x1000 
     cmp $0, %rdi
     jl nmi_asm_check_ist7_exit_now
@@ -41,7 +41,7 @@ nmi_asm_check_ist7_user_gs:
     lea cpu_tss_rw(%rip), %rdi
 	movq %gs:TSS_IST7(%rdi), %rdi
 
-    sub %rsp, %rdi // rdi = rdi - rsp
+    sub 0x20(%rsp), %rdi // rdi = rdi - rsp
     //we're on ist7 if 0 <= rdi <= 0x1000 
     cmp $0, %rdi
     jl nmi_asm_check_ist7_exit_now
@@ -90,7 +90,7 @@ nmi_asm_debug:
 
 nmi_asm_ret_stub:
 
-    add 0x28, %rsp
+    add $0x28, %rsp
     pop %rbx
     ret
     int3
