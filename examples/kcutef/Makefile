@@ -1,5 +1,5 @@
 CC = gcc
-KFLAGS = -I ../kcutidt -K ../kcutidt -k kcutidt.ko 
+KFLAGS = -I ../kcutidt -I ../kcutnmi -K ../kcutidt -k kcutidt.ko -K ../kcutnmi -k kcutnmi.ko
 TARGET := kcutef.ko
 .PHONY: clean 
 

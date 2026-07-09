@@ -1,9 +1,11 @@
 #include <linux/printk.h> 
 
-#include "nmiadaptor.kh"
+#include "nmiadaptor.h"
 
 void* nmi_adaptor_asm_exc_nmi;
+EXPORT_SYMBOL(nmi_adaptor_asm_exc_nmi);
 
+EXPORT_SYMBOL(nmi_asm_check_ist7);
 
 #define DEBUG
 
@@ -20,6 +22,8 @@ int extension_init(void)
     //try IST7 nmi, expect retval 1
     retVal = nmi_asm_debug(0);
     pr_info("nmi_asm_debug(0): %d, expected 1", retVal);
+
+    pr_info("nmi_asm_check_ist7 is at 0x%llx", (unsigned long long)&nmi_asm_check_ist7);
 
     return 0;
 }

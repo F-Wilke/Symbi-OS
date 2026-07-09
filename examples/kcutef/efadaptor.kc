@@ -17,6 +17,7 @@
 #include <asm/idtentry.h>
 
 #include "idtadaptor.h"
+#include "nmiadaptor.h"
 #include "efadaptor.kh"
 
 #define VERBOSE 
@@ -269,31 +270,50 @@ static int process_vec(int cpu, gate_desc *idt, int tsthdlr, int vec)
   // grab original handler this might be the test handler if it was
   // set above
   hdlr = gate_offset(&gate);
-  
-  // value zero is reseved as don't use an ist stack
-  if (gate.bits.ist != 0) {
-    VINFO("%s:   CPU %d: IDT gate %d already using and IST: %d skipping\n",
-	  __func__, cpu, vec, gate.bits.ist);
-    return 0;
+
+  //special case NMI: install our shim
+  if (vec == NMI_VECTOR) {
+    if (hdlr == (unsigned long)nmi_adaptor_asm_exc_nmi) {
+       pr_err("CPU %d: IDT Entry %d handler MISMATCH! "
+        "NMI interposition already active\n",
+        cpu, vec);
+      return -1;
+    }
+
+    nmi_adaptor_asm_exc_nmi = (void*)hdlr;
+    hdlr = (unsigned long)&nmi_asm_check_ist7;
+
+    VINFO("%s:     CPU %d: IDT gate %d saved %lx new handler %lx\n", __func__,
+	    cpu, vec, (unsigned long)nmi_adaptor_asm_exc_nmi, (unsigned long)&nmi_asm_check_ist7);
+
   }
-  gate.bits.ist = IST_INDEX_EF + 1; // note must add one to index!!! 
-  
-  // record vector's original handler that runs on rsp0
-  unsigned long expected  = 0;
-  unsigned long savedhdlr = cmpxchg(&ef_adaptor_orig_isrs[vec], expected, hdlr);
-  if (savedhdlr != 0 && savedhdlr != hdlr) {
-    // MISMATCH! Different CPUs have different handlers
-    pr_err("CPU %d: IDT Entry %d handler MISMATCH! "
-	   "Expected %lx, found %lx in array\n",
-	   cpu, vec, hdlr, savedhdlr);
-    return -1;
+  else {
+    // value zero is reseved as don't use an ist stack
+    if (gate.bits.ist != 0) {
+      VINFO("%s:   CPU %d: IDT gate %d already using and IST: %d skipping\n",
+      __func__, cpu, vec, gate.bits.ist);
+      return 0;
+    }
+    gate.bits.ist = IST_INDEX_EF + 1; // note must add one to index!!! 
+    
+    // record vector's original handler that runs on rsp0
+    unsigned long expected  = 0;
+    unsigned long savedhdlr = cmpxchg(&ef_adaptor_orig_isrs[vec], expected, hdlr);
+    if (savedhdlr != 0 && savedhdlr != hdlr) {
+      // MISMATCH! Different CPUs have different handlers
+      pr_err("CPU %d: IDT Entry %d handler MISMATCH! "
+       "Expected %lx, found %lx in array\n",
+       cpu, vec, hdlr, savedhdlr);
+      return -1;
+    }
+    
+    VINFO("%s:     CPU %d: IDT gate %d saved %lx new handler %lx\n", __func__,
+    cpu, vec, hdlr, (unsigned long)&isrs[isr_len*vec]);
+    
+    // update gate to point to new ef vector specific isr
+    hdlr = (unsigned long)&(isrs[(isr_len*vec)]);		    
   }
   
-  VINFO("%s:     CPU %d: IDT gate %d saved %lx new handler %lx\n", __func__,
-	cpu, vec, hdlr, (unsigned long)&isrs[isr_len*vec]);
-  
-  // update gate to point to new ef vector specific isr
-  hdlr = (unsigned long)&(isrs[(isr_len*vec)]);		    
   gate_set_offset(&gate, hdlr);
   
   write_idt_entry(idt, vec, &gate);
