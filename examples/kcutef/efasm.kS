@@ -4,6 +4,8 @@
 #include <asm/nospec-branch.h>
 #include <asm/thread_info.h>
 
+#define TSS_IST7    84
+
 	// HW ERROR CODE is last item pushed on to stack by exception logic
 	// bits are defined as follows for pagefault exception-- from intel manual
 	.equ ERRCODE_PF_PROT,  1<<0
@@ -120,11 +122,12 @@ ef_adaptor_asm_fix_ist_err_code:
 
 	//rdi now points to the bottom of the copied exception frame
 	lea -0x50(%rdi), %rsp //switch to new stack before we pop registers and jump to common handler
+	
 	//here we can restore IST7 to the base of the stack we entered on. 
 	//rsi already points to the top of the stack.
-
 	//read address of tss.IST7
 	//write rsi to that location
+	movq %rsi, %gs:cpu_tss_rw+TSS_IST7(%rip)
 	
 	testl $RFLAGS_SWAPPED_GS, 0x38(%rsp)
 	jz .Lerr_c_no_swap_back
@@ -187,21 +190,17 @@ ef_adaptor_asm_fix_ist_no_err_code:
 	pushq %rsi
 	pushq %rcx
 	
-	testq %rdi, %rdi
-	js .Lno_err_c_skip_set_dest //if negative, then we already have the right destination 
-
-	//get tss.rsp0 as destination (rdi)
-	rdgsbase %rdi
-	testq %rdi, %rdi
+	rdgsbase %rcx
+	testq %rcx, %rcx
 	js .Lno_err_c_no_swapgs //if gsbase is negative, then we were elevated
 	
 	swapgs //swapgs was not a kernel address, so we need to swap it
-	lea cpu_tss_rw(%rip), %rdi
-	movq %gs:TSS_sp0(%rdi), %rdi
-	swapgs //restore original gsbase
-
-	jmp .Lno_err_c_skip_set_dest
+	orl $RFLAGS_SWAPPED_GS, 0x30(%rsp) //if negative, then we already have the right destination 
+	
 .Lno_err_c_no_swapgs:
+	testq %rdi, %rdi
+	js .Lno_err_c_skip_set_dest
+
 	lea cpu_tss_rw(%rip), %rdi
 	movq %gs:TSS_sp0(%rdi), %rdi
 
@@ -220,6 +219,14 @@ ef_adaptor_asm_fix_ist_no_err_code:
 
 	//read address of tss.IST7
 	//write rsi to that location
+	movq %rsi, %gs:cpu_tss_rw+TSS_IST7(%rip)
+
+	testl $RFLAGS_SWAPPED_GS, 0x30(%rsp)
+	jz .Lno_err_c_no_swap_back
+	swapgs //swap back gs if we swapped it in the beginning of this function
+	andl $RFLAGS_SWAPPED_GS_MASK, 0x30(%rsp) //clear the swapped gs bit in the saved RFLAGS in the exception frame so that the common handler doesn't try to swapgs back again
+
+.Lno_err_c_no_swap_back:
 
 	popq %rcx
 	popq %rsi
