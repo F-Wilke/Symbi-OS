@@ -20,6 +20,40 @@
 #include "nmiadaptor.h"
 #include "efadaptor.kh"
 
+// This module takes take over the initial handling of exceptions
+// 1. use the idt adaptor to install its own handler infront of all
+//    the non-maskable interrupts and those that do not use their
+//    own ist stacks.
+// 2. It programs the interrupts to always spill the hardware exception frame
+//    to a per-core stack of exception frame contexts (allocated and managed by
+//    this code)
+
+// Core exception frame module data structures
+
+// PER CPU STATE
+// 1 cachline worth bytes per cpu ef info. avoid's false sharing incase
+// we ever use it for writable data
+// cachline is likely a nice power of 2 that will also make  assembly code indexing
+// fast as we can do a simple shift to go from cpu id to our percpu info
+struct ef_percpu_desc {
+   uint64_t gsbase;               // 8 bytes
+   uint64_t tss;                  // 8 bytes
+   uint64_t tss_istptr;           // 8 bytes
+   uint64_t ef_ctx_stack_base;    // 8 bytes
+   uint64_t ef_ctx_stack_top;     // 8 bytes
+   uint64_t ef_ctx_idx;           // 8 bytes 
+   uint8_t _pad[L1_CACHE_BYTES - 6 * sizeof(uint64_t)];
+} ____cacheline_aligned;         // align to a cache line
+static_assert(sizeof(struct ef_percpu_desc) == L1_CACHE_BYTES,
+              "ef_percpu_desc must be exactly one cache line in size: fix pad?");	      
+struct ef_percpu_desc ef_percpu[NR_CPUS] ____cacheline_aligned;
+
+// assembly code note on how to use cachline size to index
+// #include <asm/cache.h>
+// .ef_percpu_desc_shift = L1_CACHE_SHIFT
+//
+// shl r15, .ef_percpu_desc_shift
+
 #define VERBOSE 
 
 #define ALL_VECTORS
@@ -196,7 +230,29 @@ static void ef_adaptor_setup_tss(void* arg) {
     (void)dummy;
         
     // install in to tss for IST_INDEX_EF (IST7)
-    tss->x86_tss.ist[IST_INDEX_EF] = efstack + PAGE_SIZE;  // set to top
+    {
+      const unsigned long ef_top = efstack + PAGE_SIZE;
+      const unsigned long gsbase = per_cpu_offset(cpu);
+      
+      tss->x86_tss.ist[IST_INDEX_EF] = ef_top;  // set to top
+      WRITE_ONCE(ef_percpu[cpu].ef_ctx_stack_top, ef_top);
+      WRITE_ONCE(ef_percpu[cpu].ef_ctx_stack_base, efstack);
+      WRITE_ONCE(ef_percpu[cpu].ef_ctx_idx, 0);
+      WRITE_ONCE(ef_percpu[cpu].gsbase, gsbase);
+      WRITE_ONCE(ef_percpu[cpu].tss, (uint64_t)tss);
+      WRITE_ONCE(ef_percpu[cpu].tss_istptr,
+		 (uint64_t)&(tss->x86_tss.ist[IST_INDEX_EF]));
+      smp_wmb();
+      pr_info("%s: CPU %d: ef_percpu[%d]: ctx_stack_top:%llx ctx_stack_base:%llx ctx_idx:%lld gsbase:%llx, tss:%llx, tss_istptr:%llx\n",
+	      __func__, cpu, cpu,
+	      ef_percpu[cpu].ef_ctx_stack_top,
+	      ef_percpu[cpu].ef_ctx_stack_base,
+	      ef_percpu[cpu].ef_ctx_idx,
+	      ef_percpu[cpu].gsbase,
+	      ef_percpu[cpu].tss,
+	      ef_percpu[cpu].tss_istptr);
+
+    }
 #ifdef EF_STACK_DEBUG
     WRITE_ONCE(ef_stacks[cpu], efstack);
     smp_wmb();
@@ -411,6 +467,14 @@ int extension_init(void)
   int vend          = 255;
 #endif
 
+  // validate that static percpu array is big enough
+  // we use static array to avoid extra indirection on
+  // hot interrupt assembly paths
+  if (nr_cpu_ids > NR_CPUS) {
+    pr_err("cpu_id range exceeds ef_percpu array bounds\n");
+    return -EINVAL;
+  }
+  
   set_local_df_handler_location();
   
   int tsthdlr = 0; // set to one to install test handler on all non-present entries
