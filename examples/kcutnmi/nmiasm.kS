@@ -44,13 +44,14 @@ nmi_asm_check_ist7_user_gs:
     sub 0x20(%rsp), %rdi // rdi = rdi - rsp
     //we're on ist7 if 0 <= rdi <= 0x1000 
     cmp $0, %rdi
-    jl nmi_asm_check_ist7_exit_now
+    jl nmi_asm_check_ist7_user_exit_now
     cmp $0x1000, %rdi
-    jg nmi_asm_check_ist7_exit_now
+    jg nmi_asm_check_ist7_user_exit_now
     //we're one IST7
 
     movq $1, %rax //here we'll push IST7 further down
 
+nmi_asm_check_ist7_user_exit_now:
     swapgs
     pop %rdi
     jmp *nmi_adaptor_asm_exc_nmi

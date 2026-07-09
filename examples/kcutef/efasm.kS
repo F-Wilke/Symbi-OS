@@ -61,6 +61,10 @@ ef_adaptor_asm_fix_ist_err_code:
 
 
 .Lerr_c_no_swapgs:	
+	movabs $0xcccccccccccccccc, %rcx
+	cmp %rcx, %rdi
+	je .Lerr_c_do_double_fault //we have 
+
 	testq %rdi, %rdi
 	jns .Lskip_double_fault_test //if positive then we came from user mode, no df check needed
 
@@ -75,6 +79,7 @@ ef_adaptor_asm_fix_ist_err_code:
 	testq %rcx, %rsi
 	jns .Lerr_c_skip_set_dest //we are on some other page so no df
 
+.Lerr_c_do_double_fault:
 	//here we'll jump to the DF handler
 	popq %rcx
 	popq %rsi
@@ -115,7 +120,12 @@ ef_adaptor_asm_fix_ist_err_code:
 
 	//rdi now points to the bottom of the copied exception frame
 	lea -0x50(%rdi), %rsp //switch to new stack before we pop registers and jump to common handler
+	//here we can restore IST7 to the base of the stack we entered on. 
+	//rsi already points to the top of the stack.
 
+	//read address of tss.IST7
+	//write rsi to that location
+	
 	testl $RFLAGS_SWAPPED_GS, 0x38(%rsp)
 	jz .Lerr_c_no_swap_back
 	swapgs //swap back gs if we swapped it in the beginning of this function
@@ -205,6 +215,11 @@ ef_adaptor_asm_fix_ist_no_err_code:
 
 	//rdi now points to the bottom of the copied exception frame
 	lea -0x48(%rdi), %rsp //switch to new stack before we pop registers and jump to common handler
+	//here we can restore IST7 to the base of the stack we entered on. 
+	//rsi already points to the top of the stack.
+
+	//read address of tss.IST7
+	//write rsi to that location
 
 	popq %rcx
 	popq %rsi
