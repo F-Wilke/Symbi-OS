@@ -2,7 +2,7 @@ KCC    := $(realpath ../tools/kcc)
 KLD    := $(realpath ../tools/src/kld/kld)
 
 KALLSYMS_PATH ?= /proc/kallsyms
-KFLAGS       := -S $(KALLSYMS_PATH) -K $(realpath ../kcutidt) -K $(realpath ../kcutef) -K $(realpath ../kcutevac)  -K $(realpath ../kcuttcp) -k kcutidt.ko -k kcutef.ko -k kcutevac.ko -k kcuttcp.ko -k /proc/kallsyms
+KFLAGS       := -S $(KALLSYMS_PATH) -K $(realpath ../kcutidt) -K $(realpath ../kcutnmi) -K $(realpath ../kcutef) -K $(realpath ../kcutevac)  -K $(realpath ../kcuttcp) -k kcutidt.ko -k kcutnmi.ko -k kcutef.ko -k kcutevac.ko -k kcuttcp.ko -k /proc/kallsyms
 KLDFLAGS     := -t $(PWD)/kotbl.bin
 KCUT_CFLAGS  := $(CFLAGS) -D KCUT_TCP -I $(realpath ../kcuttcp) -I $(realpath ../kcuttest) -I $(realpath ../kcutevac)  -I $(realpath ../../Symlib/include) -DDYNLINK
 
