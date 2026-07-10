@@ -1,5 +1,5 @@
 #include <linux/printk.h> 
-
+#include <linux/module.h> 
 #include "nmiadaptor.h"
 
 void* nmi_adaptor_asm_exc_nmi;
@@ -29,3 +29,4 @@ int extension_init(void)
     return 0;
 }
 
+MODULE_INFO(kld, "SHARED");
