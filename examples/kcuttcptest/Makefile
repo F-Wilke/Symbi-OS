@@ -23,7 +23,7 @@ esrv: esrv.o
 	$(CC) $(CFLAGS) -o $@ $< 
 
 libkern.so kotbl.bin: 
-	${KLD} -K ../kcutidt -K ../kcutef -K ../kcutevac -k kcutidt.ko -k kcutef.ko -k kcutevac.ko -k /proc/kallsyms
+	${KLD} ${KFLAGS} 
 
 kcut_bpbs_esrv.o: esrv.c libkern.so kotbl.bin 
 	$(CC) $(KCUT_CFLAGS) -D BRACKET_PRIV -D BRACKET_STACK  -c -o $@ $<

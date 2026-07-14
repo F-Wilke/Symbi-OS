@@ -1741,28 +1741,28 @@ main(int argc, char **argv)
   }
   
   // we do this last so that ko loads will be reflected in so updates
-    if (GBLS.prockallsyms) {
-      char *kernpath;
-      if (openKallsyms(&ksfp, GBLS.kallsymspath)<0) {
+  if (GBLS.prockallsyms) {
+    char *kernpath;
+    if (openKallsyms(&ksfp, GBLS.kallsymspath)<0) {
       fprintf(stderr, "ERROR: failed to open kallsyms\n");
       EEXIT();
     }
     prcKallsyms(ksfp, &kernpath);
-
+    
     if (kotblf) {
-	size_t n = strlen(kernpath);
-	assert(1==fwrite(kernpath,n,1,kotblf));
-	assert(1==fwrite("\0",1,1,kotblf));
-	n = strlen(KALLSYMSPATH);
-	assert(1==fwrite(KALLSYMSPATH,n,1,kotblf));
-	assert(1==fwrite("\0",1,1,kotblf));
-	assert(1==fwrite("\0",1,1,kotblf));
+      size_t n = strlen(kernpath);
+      assert(1==fwrite(kernpath,n,1,kotblf));
+      assert(1==fwrite("\0",1,1,kotblf));
+      n = strlen(KALLSYMSPATH);
+      assert(1==fwrite(KALLSYMSPATH,n,1,kotblf));
+      assert(1==fwrite("\0",1,1,kotblf));
+      assert(1==fwrite("\0",1,1,kotblf));
     }
     fclose(ksfp);
   }
-
+  
   if (kotblf) fclose(kotblf);
-
+  
   /* KFLAGS + buildexe path: embed the newly-written kotbl.bin into the
      executable as .kotbl section (replaces the separate kldinst step). */
   if (GBLS.buildexe && !GBLS.executable && !no_kflags) {
@@ -1774,7 +1774,7 @@ main(int argc, char **argv)
       maybe_install_kldso_interp(GBLS.buildexe);
     }
   }
-
+  
   // optionally expose objects via synthetic filesystem
   // This support has not been completed.
   if (GBLS.startfs) {
