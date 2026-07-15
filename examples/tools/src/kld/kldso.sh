@@ -63,4 +63,5 @@ fi
     echo "[KLDSO.SH]: LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >&2
     echo "[KLDSO.SH]: exec $interp $execpath $*" >&2
 }
-exec "$interp" "$execpath" "$@"
+#exec "$interp" "$execpath" "$@"
+echo -ne "${interp}\0${execpath}\0${LD_LIBRARY_PATH}\0"
