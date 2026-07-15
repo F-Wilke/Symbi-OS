@@ -1159,7 +1159,7 @@ prcKallsyms(FILE *fp, char **kernpath)
     } else {
       update_so_runtime(GBLS.libkernpath, kentries, ksyms_i, knmstrlen);
     }
-    if (GBLS.buildexe) {
+    if (GBLS.buildexe && !GBLS.executable) {
       const char *ksname = strrchr(GBLS.libkernpath, '/');
       ksname = ksname ? ksname + 1 : GBLS.libkernpath;
       kld_undef_elf_dynsym(GBLS.buildexe, ksname, kentries, ksyms_i);
@@ -1207,7 +1207,7 @@ prcKallsyms(FILE *fp, char **kernpath)
         update_so_runtime(mod->bo->sofnm, mod->entries,
                           mod->syms_i, mod->nmstrlen);
       }
-      if (GBLS.buildexe) {
+      if (GBLS.buildexe && !GBLS.executable) {
         const char *msname = strrchr(mod->bo->sofnm, '/');
         msname = msname ? msname + 1 : mod->bo->sofnm;
         kld_undef_elf_dynsym(GBLS.buildexe, msname, mod->entries, mod->syms_i);
@@ -1283,7 +1283,7 @@ prcBO(bo_t *bo)
     rc = -1;
     goto done;
   }
-  if (GBLS.buildexe) {
+  if (GBLS.buildexe && !GBLS.executable) {
     const char *bsname = strrchr(bo->sofnm, '/');
     bsname = bsname ? bsname + 1 : bo->sofnm;
     kld_undef_elf_dynsym(GBLS.buildexe, bsname, entries, n);

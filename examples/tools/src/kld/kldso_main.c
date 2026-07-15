@@ -16,7 +16,19 @@
 #define WIFEXITED_LOCAL(st)   (((st) & 0x7f) == 0)
 #define WEXITSTATUS_LOCAL(st) (((st) >> 8) & 0xff)
 
-// some code from gemini
+int   debug=0;
+// some code from copilot (with various model -- mostly GPT 5.3 Codex)
+
+static unsigned long
+align_down(unsigned long v, unsigned long a) {
+  return v & ~(a - 1);
+}
+
+static unsigned long
+align_up(unsigned long v, unsigned long a) {
+  return (v + a - 1) & ~(a - 1);
+}
+
 
 /* --- 1. Minimal Syscall Wrappers --- */
 static inline long sys_write(int fd, const char *buf, unsigned long len) {
@@ -200,22 +212,423 @@ char *get_env_value(char **envp, const char *key) {
 #define STRINGIFY(x) #x
 #define TOSTRING(x) STRINGIFY(x)
 
-/* --- kld so helpers ---- */
-static unsigned long
-align_down(unsigned long v, unsigned long a) {
-  return v & ~(a - 1);
+#if 0
+/* --- stack sanity checking code --- */
+
+static void dbg_puts(const char *s) {
+  sys_write(2, s, (unsigned long)my_strlen(s));
 }
 
-static unsigned long
-align_up(unsigned long v, unsigned long a) {
-  return (v + a - 1) & ~(a - 1);
+static void dbg_puthex(unsigned long v) {
+  char b[2 + (sizeof(unsigned long) * 2) + 1];
+  const char *hex = "0123456789abcdef";
+  int n = 2 + (int)(sizeof(unsigned long) * 2);
+  b[0] = '0'; b[1] = 'x';
+  for (int i = n - 1; i >= 2; i--) {
+    b[i] = hex[v & 0xf];
+    v >>= 4;
+  }
+  b[n] = '\0';
+  dbg_puts(b);
 }
+
+static void dbg_putdec(unsigned long v) {
+  char b[32];
+  int i = 31;
+  b[i--] = '\0';
+  if (v == 0) {
+    b[i] = '0';
+    dbg_puts(&b[i]);
+    return;
+  }
+  while (v && i >= 0) {
+    b[i--] = (char)('0' + (v % 10));
+    v /= 10;
+  }
+  dbg_puts(&b[i + 1]);
+}
+
+static void dbg_nl(void) { sys_write(2, "\n", 1); }
+
+void dump_startup_frame(const char *tag, void *rsp)
+{
+  unsigned long *sp = (unsigned long *)rsp;
+  unsigned long argc = *sp++;
+  char **argv = (char **)sp;
+  char **envp = &argv[argc + 1];
+
+  dbg_puts("[KLD.SO][SANITY] "); dbg_puts(tag); dbg_nl();
+  dbg_puts("  rsp="); dbg_puthex((unsigned long)rsp);
+  dbg_puts(" argc="); dbg_putdec(argc); dbg_nl();
+
+  dbg_puts("  argv="); dbg_puthex((unsigned long)argv);
+  dbg_puts(" argv[argc]="); dbg_puthex((unsigned long)argv[argc]); dbg_nl();
+
+  unsigned long envc = 0;
+  while (envp[envc] && envc < 65536) envc++;
+  dbg_puts("  envp="); dbg_puthex((unsigned long)envp);
+  dbg_puts(" envc="); dbg_putdec(envc);
+  dbg_puts(" envp[envc]="); dbg_puthex((unsigned long)envp[envc]); dbg_nl();
+
+  Elf64_auxv_t *aux = (Elf64_auxv_t *)&envp[envc + 1];
+  dbg_puts("  auxv="); dbg_puthex((unsigned long)aux); dbg_nl();
+
+  unsigned long at_phdr = 0, at_phnum = 0, at_phent = 0;
+  unsigned long at_entry = 0, at_base = 0, at_execfn = 0;
+  int saw_null = 0;
+  for (int i = 0; i < 256; i++) {
+    if (aux[i].a_type == AT_NULL) { saw_null = 1; break; }
+    if (aux[i].a_type == AT_PHDR)   at_phdr = aux[i].a_un.a_val;
+    if (aux[i].a_type == AT_PHNUM)  at_phnum = aux[i].a_un.a_val;
+    if (aux[i].a_type == AT_PHENT)  at_phent = aux[i].a_un.a_val;
+    if (aux[i].a_type == AT_ENTRY)  at_entry = aux[i].a_un.a_val;
+    if (aux[i].a_type == AT_BASE)   at_base = aux[i].a_un.a_val;
+    if (aux[i].a_type == AT_EXECFN) at_execfn = aux[i].a_un.a_val;
+  }
+
+  dbg_puts("  AT_PHDR="); dbg_puthex(at_phdr);
+  dbg_puts(" AT_PHNUM="); dbg_putdec(at_phnum);
+  dbg_puts(" AT_PHENT="); dbg_putdec(at_phent); dbg_nl();
+
+  dbg_puts("  AT_ENTRY="); dbg_puthex(at_entry);
+  dbg_puts(" AT_BASE="); dbg_puthex(at_base);
+  dbg_puts(" AT_EXECFN="); dbg_puthex(at_execfn); dbg_nl();
+
+  if (!saw_null) {
+    dbg_puts("  ERROR: auxv AT_NULL not found within 256 entries\n");
+    return;
+  }
+  if (!at_phdr || !at_phnum || at_phent != sizeof(Elf64_Phdr) || at_phnum > 1024) {
+    dbg_puts("  ERROR: PHDR auxv fields invalid\n");
+    return;
+  }
+
+  Elf64_Phdr *ph = (Elf64_Phdr *)at_phdr;
+  unsigned long load_bias = 0;
+  int has_phdr = 0, has_interp = 0;
+  unsigned long interp_ptr = 0;
+
+  for (unsigned long i = 0; i < at_phnum; i++) {
+    if (ph[i].p_type == PT_PHDR) {
+      has_phdr = 1;
+      load_bias = at_phdr - ph[i].p_vaddr;
+      break;
+    }
+  }
+
+  for (unsigned long i = 0; i < at_phnum; i++) {
+    if (ph[i].p_type == PT_INTERP) {
+      has_interp = 1;
+      interp_ptr = load_bias + ph[i].p_vaddr;
+      break;
+    }
+  }
+
+  dbg_puts("  PHDR scan: has_PT_PHDR="); dbg_putdec((unsigned long)has_phdr);
+  dbg_puts(" load_bias="); dbg_puthex(load_bias);
+  dbg_puts(" has_PT_INTERP="); dbg_putdec((unsigned long)has_interp); dbg_nl();
+
+  if (has_interp) {
+    dbg_puts("  PT_INTERP ptr="); dbg_puthex(interp_ptr);
+    dbg_puts(" str=");
+    if (interp_ptr) dbg_puts((const char *)interp_ptr);
+    dbg_nl();
+  } else {
+    dbg_puts("  ERROR: PT_INTERP not found via AT_PHDR walk\n");
+  }
+}
+
+static void ov_dbg_puts(const char *s) {
+  sys_write(2, s, (unsigned long)my_strlen(s));
+}
+
+static void ov_dbg_hex(unsigned long v) {
+  char b[2 + (sizeof(unsigned long) * 2) + 1];
+  const char *hex = "0123456789abcdef";
+  int n = 2 + (int)(sizeof(unsigned long) * 2);
+  b[0] = '0'; b[1] = 'x';
+  for (int i = n - 1; i >= 2; i--) { b[i] = hex[v & 0xf]; v >>= 4; }
+  b[n] = '\0';
+  ov_dbg_puts(b);
+}
+
+static void ov_dbg_nl(void) { sys_write(2, "\n", 1); }  
+
+static int ranges_overlap(unsigned long a0, unsigned long a1,
+			  unsigned long b0, unsigned long b1) {
+  return (a0 < b1) && (b0 < a1);
+}
+
+/* Check-only: prints any overlap between main PT_LOAD and mapped interp PT_LOAD    */
+static void check_main_interp_overlap(void *initial_rsp,
+				      const char *interp_path,
+				      unsigned long interp_base)
+{
+  const unsigned long PAGE = 4096;
+  unsigned long *p = (unsigned long *)initial_rsp;
+  unsigned long argc = *p++;
+  p += argc;      /* argv[] */
+  p += 1;         /* NULL */
+  while (*p) p++; /* envp[] */
+  p += 1;         /* NULL */
+  
+  Elf64_auxv_t *aux = (Elf64_auxv_t *)p;
+  Elf64_Phdr *main_phdr = 0;
+  unsigned long main_phnum = 0, main_phent = 0;
+  
+  for (; aux->a_type != AT_NULL; aux++) {
+    if (aux->a_type == AT_PHDR)  main_phdr = (Elf64_Phdr *)aux->a_un.a_val;
+    if (aux->a_type == AT_PHNUM) main_phnum = aux->a_un.a_val;
+    if (aux->a_type == AT_PHENT) main_phent = aux->a_un.a_val;
+  }
+  if (!main_phdr || !main_phnum || main_phent != sizeof(Elf64_Phdr)) {
+    ov_dbg_puts("[KLD.SO][OVL] invalid main PHDR auxv\n");
+    return;
+  }
+  
+  unsigned long main_bias = 0;
+  for (unsigned long i = 0; i < main_phnum; i++) {
+    if (main_phdr[i].p_type == PT_PHDR) {
+      main_bias = (unsigned long)main_phdr - (unsigned long)main_phdr[i].p_vaddr;
+      break;
+    }   
+  }
+  
+  int fd = (int)sys_openat(AT_FDCWD, interp_path, O_RDONLY | O_CLOEXEC, 0);
+  if (fd < 0) {
+    ov_dbg_puts("[KLD.SO][OVL] open interp failed\n");
+    return;
+  }
+  
+  struct stat st;
+  if (sys_fstat(fd, &st) < 0 || st.st_size < (off_t)sizeof(Elf64_Ehdr)) {
+    ov_dbg_puts("[KLD.SO][OVL] fstat interp failed\n");
+    sys_close(fd);
+    return;
+  }
+  
+  void *file = sys_mmap((void *)0, (unsigned long)st.st_size, PROT_READ, 
+			MAP_PRIVATE, fd, 0);
+  if ((long)file < 0) {
+    ov_dbg_puts("[KLD.SO][OVL] mmap interp failed\n");
+    sys_close(fd);
+    return;
+  }
+
+  Elf64_Ehdr *eh = (Elf64_Ehdr *)file;
+  if (my_memcmp(eh->e_ident, ELFMAG, SELFMAG) != 0 ||   
+      eh->e_phentsize != sizeof(Elf64_Phdr) ||
+      eh->e_phoff > (unsigned long)st.st_size ||
+      eh->e_phnum > ((unsigned long)st.st_size - eh->e_phoff) / 
+      sizeof(Elf64_Phdr)) {
+    ov_dbg_puts("[KLD.SO][OVL] bad interp ELF headers\n");
+    sys_munmap(file, (unsigned long)st.st_size);
+    sys_close(fd);
+    return;
+  }
+
+  Elf64_Phdr *iph = (Elf64_Phdr *)((char *)file + eh->e_phoff); 
+  int overlap_found = 0;
+
+  for (unsigned long i = 0; i < main_phnum; i++) {
+    if (main_phdr[i].p_type != PT_LOAD) continue;
+    unsigned long m0 = main_bias + align_down((unsigned 
+					       long)main_phdr[i].p_vaddr, PAGE);
+    unsigned long m1 = main_bias + align_up((unsigned long)main_phdr[i].p_vaddr +
+					    (unsigned long)main_phdr[i].p_memsz,
+					    PAGE);
+
+    for (unsigned long j = 0; j < eh->e_phnum; j++) {
+      if (iph[j].p_type != PT_LOAD) continue;
+      unsigned long l0 = interp_base + align_down((unsigned long)iph[j].p_vaddr,
+						  PAGE);
+      unsigned long l1 = interp_base + align_up((unsigned long)iph[j].p_vaddr +
+						(unsigned long)iph[j].p_memsz, 
+						PAGE);
+      if (ranges_overlap(m0, m1, l0, l1)) {
+	overlap_found = 1;
+	ov_dbg_puts("[KLD.SO][OVL] OVERLAP main ");
+	ov_dbg_hex(m0); ov_dbg_puts(".."); ov_dbg_hex(m1);
+	ov_dbg_puts(" with interp ");
+	ov_dbg_hex(l0); ov_dbg_puts(".."); ov_dbg_hex(l1);
+	ov_dbg_nl();
+      }
+    }   
+  }
+
+  if (!overlap_found) {
+    ov_dbg_puts("[KLD.SO][OVL] no main/interp PT_LOAD overlap\n");
+  }
+
+  sys_munmap(file, (unsigned long)st.st_size);
+  sys_close(fd);
+}
+			
+			
+			
+typedef struct {
+  Elf64_Phdr *phdr;
+  unsigned long phnum;
+  unsigned long phent;
+  Elf64_Phdr saved[64];
+} main_phdr_snapshot;
+
+static int snap_main_phdr(void *rsp, main_phdr_snapshot *s) {
+  unsigned long *p = (unsigned long *)rsp;
+  unsigned long argc = *p++;
+  p += argc; p += 1; while (*p) p++; p += 1;
+  Elf64_auxv_t *aux = (Elf64_auxv_t *)p;
+  
+  s->phdr = 0; s->phnum = 0; s->phent = 0;
+  for (; aux->a_type != AT_NULL; aux++) {
+    if (aux->a_type == AT_PHDR)  s->phdr = (Elf64_Phdr *)aux->a_un.a_val;
+    if (aux->a_type == AT_PHNUM) s->phnum = aux->a_un.a_val;
+    if (aux->a_type == AT_PHENT) s->phent = aux->a_un.a_val;
+  }
+  if (!s->phdr || !s->phnum || s->phent != sizeof(Elf64_Phdr) || s->phnum > 64) 
+    return -1;
+  my_memcpy(s->saved, s->phdr, (int)(s->phnum * sizeof(Elf64_Phdr)));
+  return 0;
+}
+
+static int main_phdr_changed(main_phdr_snapshot *s) {
+  return my_memcmp(s->saved, s->phdr, (int)(s->phnum * sizeof(Elf64_Phdr))) != 0;   }
+
+static void dump_saved_phdr_types(const char *tag, const main_phdr_snapshot *s)
+{
+  if (!s) {
+    dbg_puts("[KLD.SO][PHDRSAVED] null snapshot\n");
+    return;
+  }
+
+  dbg_puts("[KLD.SO][PHDRSAVED] ");
+  dbg_puts(tag);
+  dbg_puts(" phdr=");
+  dbg_puthex((unsigned long)s->phdr);
+  dbg_puts(" phnum=");
+  dbg_putdec(s->phnum);
+  dbg_puts(" phent=");
+  dbg_putdec(s->phent);
+  dbg_nl();
+
+  if (!s->phnum || s->phnum > 64 || s->phent != sizeof(Elf64_Phdr)) {
+    dbg_puts("[KLD.SO][PHDRSAVED] invalid snapshot metadata\n");
+    return;
+  }
+
+  for (unsigned long i = 0; i < s->phnum; i++) {
+    dbg_puts("  [");
+    dbg_putdec(i);
+    dbg_puts("] p_type=");
+    dbg_putdec((unsigned long)s->saved[i].p_type);
+    dbg_puts(" vaddr=");
+    dbg_puthex((unsigned long)s->saved[i].p_vaddr);
+    dbg_puts(" memsz=");
+    dbg_puthex((unsigned long)s->saved[i].p_memsz);
+    dbg_nl();
+  }
+}
+
+/* Returns: 1 overlap found, 0 no overlap, <0 error */
+static int
+check_overlap_from_snapshot(const main_phdr_snapshot *ms,
+			    const char *interp_path,
+			    unsigned long interp_base)
+{
+  const unsigned long PAGE = 4096;
+  if (!ms || !ms->phnum || ms->phnum > 64 || !interp_path) return -1;
+
+  /* Compute main load bias from snapshot (not live AT_PHDR memory). */
+  unsigned long main_bias = 0;
+  int found_main_pt_phdr = 0;
+  for (unsigned long i = 0; i < ms->phnum; i++) {
+    if (ms->saved[i].p_type == PT_PHDR) {
+      main_bias = (unsigned long)ms->phdr - (unsigned long)ms->saved[i].p_vaddr;
+      found_main_pt_phdr = 1;
+      break;
+    }
+  }
+  if (!found_main_pt_phdr) {
+    ov_dbg_puts("[KLD.SO][OVL] snapshot: main PT_PHDR missing\n");
+    return -2;
+  }
+
+  int fd = (int)sys_openat(AT_FDCWD, interp_path, O_RDONLY | O_CLOEXEC, 0);
+  if (fd < 0) return -3;
+
+  struct stat st;
+  if (sys_fstat(fd, &st) < 0 || st.st_size < (off_t)sizeof(Elf64_Ehdr)) {
+    sys_close(fd);
+    return -4;
+  }
+
+  void *file = sys_mmap((void *)0, (unsigned long)st.st_size, PROT_READ, 
+			MAP_PRIVATE, fd, 0);
+  if ((long)file < 0) {
+    sys_close(fd);
+    return -5;
+  }
+
+  Elf64_Ehdr *eh = (Elf64_Ehdr *)file;
+  if (my_memcmp(eh->e_ident, ELFMAG, SELFMAG) != 0 ||
+      eh->e_phentsize != sizeof(Elf64_Phdr) ||
+      eh->e_phoff > (unsigned long)st.st_size ||
+      eh->e_phnum > ((unsigned long)st.st_size - eh->e_phoff) / 
+      sizeof(Elf64_Phdr)) {
+    sys_munmap(file, (unsigned long)st.st_size);
+    sys_close(fd);
+    return -6;
+  }
+
+  Elf64_Phdr *iph = (Elf64_Phdr *)((char *)file + eh->e_phoff);
+  int overlap_found = 0;
+
+  for (unsigned long i = 0; i < ms->phnum; i++) {
+    if (ms->saved[i].p_type != PT_LOAD) continue;
+
+    unsigned long m0 = main_bias + align_down((unsigned 
+					       long)ms->saved[i].p_vaddr, PAGE);
+    unsigned long m1 = main_bias + align_up((unsigned long)ms->saved[i].p_vaddr +                                               (unsigned long)ms->saved[i].p_memsz,    PAGE);
+
+    for (unsigned long j = 0; j < eh->e_phnum; j++) {
+      if (iph[j].p_type != PT_LOAD) continue;
+
+      unsigned long l0 = interp_base + align_down((unsigned long)iph[j].p_vaddr,    PAGE);
+      unsigned long l1 = interp_base + align_up((unsigned long)iph[j].p_vaddr +
+						(unsigned long)iph[j].p_memsz, 
+						PAGE);
+
+      if (ranges_overlap(m0, m1, l0, l1)) {
+	overlap_found = 1;
+	ov_dbg_puts("[KLD.SO][OVL] OVERLAP main ");
+	ov_dbg_hex(m0); ov_dbg_puts(".."); ov_dbg_hex(m1);
+	ov_dbg_puts(" with interp ");
+	ov_dbg_hex(l0); ov_dbg_puts(".."); ov_dbg_hex(l1);
+	ov_dbg_nl();
+      }
+    }
+  }
+
+  if (!overlap_found) {
+    ov_dbg_puts("[KLD.SO][OVL] snapshot check: no main/interp PT_LOAD overlap\n");
+  }
+
+     sys_munmap(file, (unsigned long)st.st_size);
+     sys_close(fd);
+     return overlap_found;
+   }
+
+main_phdr_snapshot g_ms;
+#endif
+
+/* --- kld so helpers ---- */
 
 static void die_msg(const char *m) {
     sys_write(2, m, (unsigned long)my_strlen(m));
     sys_write(2, "\n", 1);
     sys_exit(1);
 }
+
 
 
 static int parse_kld_triplet(char *buf, long n,
@@ -252,7 +665,6 @@ static int parse_kld_triplet(char *buf, long n,
 
 static int run_kldso_sh(const char *script_path,
 			int argc, char **argv, char **envp,
-			int debug,
 			char *outbuf, unsigned long outcap,
 			long *outn) {
   int pfds[2];
@@ -398,14 +810,19 @@ patch_dt_debug_ptr(void *initial_rsp, kld_r_debug *rd)
     }
     if (!phdr || !phnum || phent != sizeof(Elf64_Phdr)) return -1;
 
+    int found_pt_phdr = 0;
     unsigned long load_bias = 0;
     for (unsigned long i = 0; i < phnum; i++) {
         if (phdr[i].p_type == PT_PHDR) {
             load_bias = (unsigned long)phdr - (unsigned long)phdr[i].p_vaddr;
+	    found_pt_phdr = 1;
             break;
         }
     }
-
+    if (!found_pt_phdr) {
+      load_bias = 0;
+    }
+    
     Elf64_Dyn *dyn = NULL;
     for (unsigned long i = 0; i < phnum; i++) {
         if (phdr[i].p_type == PT_DYNAMIC) {
@@ -413,7 +830,7 @@ patch_dt_debug_ptr(void *initial_rsp, kld_r_debug *rd)
             break;
         }
     }
-    if (!dyn) return -1;
+    if (!dyn) return -3;
 
     for (; dyn->d_tag != DT_NULL; dyn++) {
         if (dyn->d_tag == DT_DEBUG) {
@@ -421,7 +838,7 @@ patch_dt_debug_ptr(void *initial_rsp, kld_r_debug *rd)
             return 0;
         }
     }
-    return -1;
+    return -4;
 }
 
 static int
@@ -638,7 +1055,6 @@ c_entry(int argc, char **argv, char *extraspace,
 	unsigned long maxextrabytes)
 {
   // we extend the stack so that we can modify envp as needed
-  int   debug=0;
   char **envp;
   char *orig_interp=NULL, *exec=NULL, *ldlibpath=NULL;
   char *script_path       = TOSTRING(KLDD_SH_PATH);
@@ -663,7 +1079,7 @@ c_entry(int argc, char **argv, char *extraspace,
     sys_write(2, "\n", 1);
   }
 
-  if (run_kldso_sh(script_path, argc, argv, envp, debug,
+  if (run_kldso_sh(script_path, argc, argv, envp,
 		   stdoutbuf, sizeof(stdoutbuf), &n)<0) {
     die_msg("[KLD.SO]: run_kldso_sh failed");
   }
@@ -674,6 +1090,7 @@ c_entry(int argc, char **argv, char *extraspace,
   }
 
   ldlibpathlen = (ldlibpath) ? my_strlen(ldlibpath) : 0;
+
   // see if we need to insert LD_LIBRARY_PATH into the envp
   if (ldlibpathlen) {
     long extrabytes =
@@ -723,7 +1140,7 @@ c_entry(int argc, char **argv, char *extraspace,
     my_memcpy(newstrings + (sizeof("LD_LIBRARY_PATH=")-1), ldlibpath, 
 	      ldlibpathlen);
     newstrings[(sizeof("LD_LIBRARY_PATH=")-1) + ldlibpathlen] = '\0';
-
+     
     // if there was an old LD_LIBRARY_PATH, poison key in place
     char *oldldlibvar = get_env_value(&newenvp[1],
 				      "LD_LIBRARY_PATH");
@@ -736,19 +1153,24 @@ c_entry(int argc, char **argv, char *extraspace,
     // update where kld_initial_rsp with the new frame start
     kld_initial_rsp = newframestart;
   }
-
   
   unsigned long interp_base = 0, interp_entry = 0;
+  
   if (map_interp_elf(orig_interp, &interp_base, &interp_entry) < 0) {
     die_msg("[KLD.SO]: map_interp_elf failed");
   }
+
   if (patch_auxv_at_base(kld_initial_rsp, interp_base) < 0) {
     die_msg("[KLD.SO]: AT_BASE not found in auxv");
   }
-  if (init_gdb_rendezvous(kld_initial_rsp, argv, orig_interp, interp_base) < 0) {
+
+  if (init_gdb_rendezvous(kld_initial_rsp, argv,
+			  orig_interp, interp_base) < 0) {
     die_msg("[KLD.SO]: failed to initialize GDB rendezvous");
   }
+
   handoff_to_interp(kld_initial_rsp, interp_entry);
+
   
   sys_exit(1);
 }
