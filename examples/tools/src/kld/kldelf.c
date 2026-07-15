@@ -769,6 +769,11 @@ kld_set_interp(const char *path, const char *new_interp)
             if (strcmp(shstr + shdrs[i].sh_name, ".interp") == 0) {
                 shdrs[i].sh_offset = (Elf64_Off)interp_off;
                 shdrs[i].sh_size   = (Elf64_Xword)interp_len;
+                /* The new interpreter string lives outside any PT_LOAD segment.
+                   Clear SHF_ALLOC and zero sh_addr so tools like GDB do not
+                   warn "Loadable section .interp outside of ELF segments". */
+                shdrs[i].sh_flags &= ~(Elf64_Xword)SHF_ALLOC;
+                shdrs[i].sh_addr   = 0;
                 break;
             }
         }

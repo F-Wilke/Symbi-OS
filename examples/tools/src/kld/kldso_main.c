@@ -351,6 +351,112 @@ static int patch_auxv_at_base(void *initial_rsp,
     return -1;
 }
 
+typedef struct kld_link_map {
+    unsigned long l_addr;
+    char *l_name;
+    void *l_ld;
+    struct kld_link_map *l_next;
+    struct kld_link_map *l_prev;
+} kld_link_map;
+
+typedef struct kld_r_debug {
+    int r_version;
+    kld_link_map *r_map;
+    unsigned long r_brk;
+    int r_state;
+    unsigned long r_ldbase;
+} kld_r_debug;
+
+#define RT_CONSISTENT 0
+#define RT_ADD        1
+#define RT_DELETE     2
+
+__attribute__((visibility("default")))
+kld_r_debug _r_debug;
+
+__attribute__((visibility("default"), noinline))
+void _dl_debug_state(void) { }
+
+static int
+patch_dt_debug_ptr(void *initial_rsp, kld_r_debug *rd)
+{
+    unsigned long *p = (unsigned long *)initial_rsp;
+    unsigned long argc = *p++;
+    p += argc;      /* argv[] */
+    p += 1;         /* NULL */
+    while (*p) p++; /* envp[] */
+    p += 1;         /* NULL */
+
+    Elf64_auxv_t *aux = (Elf64_auxv_t *)p;
+    Elf64_Phdr *phdr = NULL;
+    unsigned long phnum = 0, phent = 0;
+
+    for (; aux->a_type != AT_NULL; aux++) {
+        if (aux->a_type == AT_PHDR)  phdr = (Elf64_Phdr *)aux->a_un.a_val;
+        if (aux->a_type == AT_PHNUM) phnum = aux->a_un.a_val;
+        if (aux->a_type == AT_PHENT) phent = aux->a_un.a_val;
+    }
+    if (!phdr || !phnum || phent != sizeof(Elf64_Phdr)) return -1;
+
+    unsigned long load_bias = 0;
+    for (unsigned long i = 0; i < phnum; i++) {
+        if (phdr[i].p_type == PT_PHDR) {
+            load_bias = (unsigned long)phdr - (unsigned long)phdr[i].p_vaddr;
+            break;
+        }
+    }
+
+    Elf64_Dyn *dyn = NULL;
+    for (unsigned long i = 0; i < phnum; i++) {
+        if (phdr[i].p_type == PT_DYNAMIC) {
+            dyn = (Elf64_Dyn *)(load_bias + (unsigned long)phdr[i].p_vaddr);
+            break;
+        }
+    }
+    if (!dyn) return -1;
+
+    for (; dyn->d_tag != DT_NULL; dyn++) {
+        if (dyn->d_tag == DT_DEBUG) {
+            dyn->d_un.d_ptr = (unsigned long)rd;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+static int
+init_gdb_rendezvous(void *initial_rsp, char **argv,
+		    const char *interp_path, unsigned long interp_base)
+{
+    static kld_link_map main_map;
+    static kld_link_map interp_map;
+
+    main_map.l_addr = 0;
+    main_map.l_name = (argv && argv[0]) ? argv[0] : (char *)"";
+    main_map.l_ld   = 0;
+    main_map.l_prev = 0;
+    main_map.l_next = &interp_map;
+
+    interp_map.l_addr = interp_base;
+    interp_map.l_name = (char *)interp_path;
+    interp_map.l_ld   = 0;
+    interp_map.l_prev = &main_map;
+    interp_map.l_next = 0;
+
+    _r_debug.r_version = 1;
+    _r_debug.r_map     = &main_map;
+    _r_debug.r_brk     = (unsigned long)&_dl_debug_state;
+    _r_debug.r_ldbase  = interp_base;
+    _r_debug.r_state   = RT_ADD;
+
+    if (patch_dt_debug_ptr(initial_rsp, &_r_debug) < 0) return -1;
+
+    _dl_debug_state();
+    _r_debug.r_state = RT_CONSISTENT;
+    _dl_debug_state();
+    return 0;
+}
+
 static int map_interp_elf(const char *interp_path,
 			  unsigned long *base_out,
 			  unsigned long *entry_out) {
@@ -638,6 +744,9 @@ c_entry(int argc, char **argv, char *extraspace,
   }
   if (patch_auxv_at_base(kld_initial_rsp, interp_base) < 0) {
     die_msg("[KLD.SO]: AT_BASE not found in auxv");
+  }
+  if (init_gdb_rendezvous(kld_initial_rsp, argv, orig_interp, interp_base) < 0) {
+    die_msg("[KLD.SO]: failed to initialize GDB rendezvous");
   }
   handoff_to_interp(kld_initial_rsp, interp_entry);
   
