@@ -178,6 +178,33 @@ static void my_memset(void *dst, int c, int n) {
     for (int i = 0; i < n; i++) d[i] = (unsigned char)c;
 }
 
+/* --- Helper to print hex values --- */
+static void print_hex(int fd, const char *prefix, unsigned long val) {
+    char buf[32];
+    int len = 0;
+    if (prefix) {
+        sys_write(fd, prefix, my_strlen(prefix));
+    }
+    sys_write(fd, "0x", 2);
+    
+    // Convert to hex
+    if (val == 0) {
+        sys_write(fd, "0", 1);
+        return;
+    }
+    
+    unsigned long tmp = val;
+    while (tmp > 0) {
+        buf[len++] = "0123456789abcdef"[tmp & 0xf];
+        tmp >>= 4;
+    }
+    
+    // Reverse and write
+    for (int i = len - 1; i >= 0; i--) {
+        sys_write(fd, &buf[i], 1);
+    }
+}
+
 /* --- 3. Custom getenv Implementation --- */
 char *get_env_value(char **envp, const char *key) {
     for (char **e = envp; *e; e++) {
@@ -378,7 +405,7 @@ __attribute__((visibility("default"), noinline))
 void _dl_debug_state(void) { }
 
 static int
-patch_dt_debug_ptr(void *initial_rsp, kld_r_debug *rd)
+patch_dt_debug_ptr(void *initial_rsp, kld_r_debug *rd, int debug)
 {
     unsigned long *p = (unsigned long *)initial_rsp;
     unsigned long argc = *p++;
@@ -396,7 +423,27 @@ patch_dt_debug_ptr(void *initial_rsp, kld_r_debug *rd)
         if (aux->a_type == AT_PHNUM) phnum = aux->a_un.a_val;
         if (aux->a_type == AT_PHENT) phent = aux->a_un.a_val;
     }
-    if (!phdr || !phnum || phent != sizeof(Elf64_Phdr)) return -1;
+    if (!phdr || !phnum || phent != sizeof(Elf64_Phdr)) {
+        sys_write(2, "[KLD.SO]: patch_dt_debug_ptr: auxv check failed\n", 49);
+        if (!phdr) sys_write(2, "[KLD.SO]:   AT_PHDR not found\n", 31);
+        if (!phnum) sys_write(2, "[KLD.SO]:   AT_PHNUM not found\n", 32);
+        if (phent != sizeof(Elf64_Phdr)) {
+            sys_write(2, "[KLD.SO]:   AT_PHENT invalid, expected=", 40);
+            print_hex(2, NULL, sizeof(Elf64_Phdr));
+            sys_write(2, " got=", 5);
+            print_hex(2, NULL, phent);
+            sys_write(2, "\n", 1);
+        }
+        return -1;
+    }
+    
+    if (debug) {
+        sys_write(2, "[KLD.SO]: patch_dt_debug_ptr: auxv scan OK\n", 44);
+        print_hex(2, "[KLD.SO]:   phdr=", (unsigned long)phdr);
+        sys_write(2, " phnum=", 8);
+        print_hex(2, NULL, phnum);
+        sys_write(2, "\n", 1);
+    }
 
     unsigned long load_bias = 0;
     for (unsigned long i = 0; i < phnum; i++) {
@@ -406,30 +453,117 @@ patch_dt_debug_ptr(void *initial_rsp, kld_r_debug *rd)
         }
     }
 
+    if (debug) {
+        sys_write(2, "[KLD.SO]: patch_dt_debug_ptr: scanning program headers\n", 56);
+        print_hex(2, "[KLD.SO]:   load_bias=", load_bias);
+        sys_write(2, "\n", 1);
+    }
+
     Elf64_Dyn *dyn = NULL;
     for (unsigned long i = 0; i < phnum; i++) {
+        if (debug) {
+            sys_write(2, "[KLD.SO]:   phdr[", 17);
+            print_hex(2, NULL, i);
+            sys_write(2, "].p_type=", 9);
+            print_hex(2, NULL, phdr[i].p_type);
+            sys_write(2, " (", 2);
+            // Print type name
+            if (phdr[i].p_type == PT_NULL) sys_write(2, "PT_NULL", 7);
+            else if (phdr[i].p_type == PT_LOAD) sys_write(2, "PT_LOAD", 7);
+            else if (phdr[i].p_type == PT_DYNAMIC) sys_write(2, "PT_DYNAMIC", 10);
+            else if (phdr[i].p_type == PT_INTERP) sys_write(2, "PT_INTERP", 9);
+            else if (phdr[i].p_type == PT_NOTE) sys_write(2, "PT_NOTE", 7);
+            else if (phdr[i].p_type == PT_SHLIB) sys_write(2, "PT_SHLIB", 8);
+            else if (phdr[i].p_type == PT_PHDR) sys_write(2, "PT_PHDR", 7);
+            else if (phdr[i].p_type == PT_TLS) sys_write(2, "PT_TLS", 6);
+            else if (phdr[i].p_type == PT_GNU_EH_FRAME) sys_write(2, "PT_GNU_EH_FRAME", 15);
+            else if (phdr[i].p_type == PT_GNU_STACK) sys_write(2, "PT_GNU_STACK", 12);
+            else if (phdr[i].p_type == PT_GNU_RELRO) sys_write(2, "PT_GNU_RELRO", 12);
+            else sys_write(2, "UNKNOWN", 7);
+            sys_write(2, ") vaddr=", 8);
+            print_hex(2, NULL, phdr[i].p_vaddr);
+            sys_write(2, "\n", 1);
+        }
+        
         if (phdr[i].p_type == PT_DYNAMIC) {
             dyn = (Elf64_Dyn *)(load_bias + (unsigned long)phdr[i].p_vaddr);
+            if (debug) {
+                sys_write(2, "[KLD.SO]:   PT_DYNAMIC found at index ", 39);
+                print_hex(2, NULL, i);
+                sys_write(2, "\n", 1);
+            }
             break;
         }
     }
-    if (!dyn) return -1;
+    if (!dyn) {
+        sys_write(2, "[KLD.SO]: patch_dt_debug_ptr: PT_DYNAMIC segment not found\n", 61);
+        sys_write(2, "[KLD.SO]:   Searched through ", 30);
+        print_hex(2, NULL, phnum);
+        sys_write(2, " program headers\n", 17);
+        
+        // If debug wasn't on, print all headers now for diagnostics
+        if (!debug) {
+            sys_write(2, "[KLD.SO]:   Program header types found:\n", 41);
+            for (unsigned long i = 0; i < phnum; i++) {
+                sys_write(2, "[KLD.SO]:     [", 15);
+                print_hex(2, NULL, i);
+                sys_write(2, "] type=", 7);
+                print_hex(2, NULL, phdr[i].p_type);
+                sys_write(2, "\n", 1);
+            }
+        }
+        return -1;
+    }
+    
+    if (debug) {
+        sys_write(2, "[KLD.SO]: patch_dt_debug_ptr: PT_DYNAMIC found\n", 48);
+        print_hex(2, "[KLD.SO]:   dyn=", (unsigned long)dyn);
+        sys_write(2, " load_bias=", 12);
+        print_hex(2, NULL, load_bias);
+        sys_write(2, "\n", 1);
+    }
 
     for (; dyn->d_tag != DT_NULL; dyn++) {
         if (dyn->d_tag == DT_DEBUG) {
             dyn->d_un.d_ptr = (unsigned long)rd;
+            if (debug) {
+                sys_write(2, "[KLD.SO]: patch_dt_debug_ptr: DT_DEBUG patched\n", 48);
+                print_hex(2, "[KLD.SO]:   rd=", (unsigned long)rd);
+                sys_write(2, "\n", 1);
+            }
             return 0;
         }
     }
+    sys_write(2, "[KLD.SO]: patch_dt_debug_ptr: DT_DEBUG not found in .dynamic\n", 62);
     return -1;
 }
 
 static int
 init_gdb_rendezvous(void *initial_rsp, char **argv,
-		    const char *interp_path, unsigned long interp_base)
+		    const char *interp_path, unsigned long interp_base, int debug)
 {
     static kld_link_map main_map;
     static kld_link_map interp_map;
+
+    if (debug) {
+        sys_write(2, "[KLD.SO]: init_gdb_rendezvous: starting\n", 41);
+        sys_write(2, "[KLD.SO]:   interp_path=", 24);
+        if (interp_path) {
+            sys_write(2, interp_path, my_strlen(interp_path));
+        } else {
+            sys_write(2, "(null)", 6);
+        }
+        sys_write(2, "\n", 1);
+        print_hex(2, "[KLD.SO]:   interp_base=", interp_base);
+        sys_write(2, "\n", 1);
+        sys_write(2, "[KLD.SO]:   argv[0]=", 20);
+        if (argv && argv[0]) {
+            sys_write(2, argv[0], my_strlen(argv[0]));
+        } else {
+            sys_write(2, "(null)", 6);
+        }
+        sys_write(2, "\n", 1);
+    }
 
     main_map.l_addr = 0;
     main_map.l_name = (argv && argv[0]) ? argv[0] : (char *)"";
@@ -449,7 +583,11 @@ init_gdb_rendezvous(void *initial_rsp, char **argv,
     _r_debug.r_ldbase  = interp_base;
     _r_debug.r_state   = RT_ADD;
 
-    if (patch_dt_debug_ptr(initial_rsp, &_r_debug) < 0) return -1;
+    if (debug) {
+        sys_write(2, "[KLD.SO]: init_gdb_rendezvous: calling patch_dt_debug_ptr\n", 59);
+    }
+
+    if (patch_dt_debug_ptr(initial_rsp, &_r_debug, debug) < 0) return -1;
 
     _dl_debug_state();
     _r_debug.r_state = RT_CONSISTENT;
@@ -459,20 +597,51 @@ init_gdb_rendezvous(void *initial_rsp, char **argv,
 
 static int map_interp_elf(const char *interp_path,
 			  unsigned long *base_out,
-			  unsigned long *entry_out) {
+			  unsigned long *entry_out, int debug) {
     const unsigned long PAGE = 4096;
+    
+    if (debug) {
+        sys_write(2, "[KLD.SO]: map_interp_elf: starting\n", 36);
+        sys_write(2, "[KLD.SO]:   interp_path=", 24);
+        sys_write(2, interp_path, my_strlen(interp_path));
+        sys_write(2, "\n", 1);
+    }
+    
     int fd = (int)sys_openat(AT_FDCWD, interp_path, O_RDONLY | O_CLOEXEC, 0);
-    if (fd < 0) return -1;
+    if (fd < 0) {
+        sys_write(2, "[KLD.SO]: map_interp_elf: failed to open file\n", 47);
+        return -1;
+    }
+    
+    if (debug) {
+        sys_write(2, "[KLD.SO]: map_interp_elf: file opened, fd=", 43);
+        print_hex(2, NULL, fd);
+        sys_write(2, "\n", 1);
+    }
 
     struct stat st;
     if (sys_fstat(fd, &st) < 0 || st.st_size < (off_t)sizeof(Elf64_Ehdr)) {
+        sys_write(2, "[KLD.SO]: map_interp_elf: fstat failed or file too small\n", 58);
         sys_close(fd);
         return -1;
     }
+    
+    if (debug) {
+        sys_write(2, "[KLD.SO]: map_interp_elf: file size=", 37);
+        print_hex(2, NULL, (unsigned long)st.st_size);
+        sys_write(2, "\n", 1);
+    }
     void *file = sys_mmap((void *)0, (unsigned long)st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
     if ((long)file < 0) {
+        sys_write(2, "[KLD.SO]: map_interp_elf: failed to mmap file\n", 47);
         sys_close(fd);
         return -1;
+    }
+    
+    if (debug) {
+        sys_write(2, "[KLD.SO]: map_interp_elf: file mmapped at ", 43);
+        print_hex(2, NULL, (unsigned long)file);
+        sys_write(2, "\n", 1);
     }
 
     Elf64_Ehdr *eh = (Elf64_Ehdr *)file;
@@ -480,50 +649,134 @@ static int map_interp_elf(const char *interp_path,
         eh->e_ident[EI_CLASS] != ELFCLASS64 ||
         eh->e_machine != EM_X86_64 ||
         eh->e_type != ET_DYN) {
+        sys_write(2, "[KLD.SO]: map_interp_elf: ELF header validation failed\n", 56);
+        if (my_memcmp(eh->e_ident, ELFMAG, SELFMAG) != 0) {
+            sys_write(2, "[KLD.SO]:   Bad ELF magic\n", 27);
+        }
+        if (eh->e_ident[EI_CLASS] != ELFCLASS64) {
+            sys_write(2, "[KLD.SO]:   Not ELFCLASS64\n", 28);
+        }
+        if (eh->e_machine != EM_X86_64) {
+            sys_write(2, "[KLD.SO]:   Not EM_X86_64\n", 27);
+        }
+        if (eh->e_type != ET_DYN) {
+            sys_write(2, "[KLD.SO]:   Not ET_DYN (type=", 30);
+            print_hex(2, NULL, eh->e_type);
+            sys_write(2, ")\n", 2);
+        }
         sys_munmap(file, (unsigned long)st.st_size);
         sys_close(fd);
         return -1;
+    }
+    
+    if (debug) {
+        sys_write(2, "[KLD.SO]: map_interp_elf: ELF header valid\n", 44);
+        sys_write(2, "[KLD.SO]:   e_entry=", 20);
+        print_hex(2, NULL, (unsigned long)eh->e_entry);
+        sys_write(2, " e_phnum=", 10);
+        print_hex(2, NULL, eh->e_phnum);
+        sys_write(2, "\n", 1);
     }
 
     if (eh->e_phentsize != sizeof(Elf64_Phdr) ||
         eh->e_phoff > (unsigned long)st.st_size ||
         eh->e_phnum > ((unsigned long)st.st_size - eh->e_phoff) / sizeof(Elf64_Phdr)) {
+        sys_write(2, "[KLD.SO]: map_interp_elf: program header validation failed\n", 60);
         sys_munmap(file, (unsigned long)st.st_size);
         sys_close(fd);
         return -1;
+    }
+
+    if (debug) {
+        sys_write(2, "[KLD.SO]: map_interp_elf: scanning PT_LOAD segments\n", 53);
     }
 
     Elf64_Phdr *ph = (Elf64_Phdr *)((char *)file + eh->e_phoff);
     unsigned long min_v = ~0UL, max_v = 0;
+    int pt_load_count = 0;
     for (int i = 0; i < eh->e_phnum; i++) {
         if (ph[i].p_type != PT_LOAD) continue;
+        pt_load_count++;
         unsigned long sv = align_down((unsigned long)ph[i].p_vaddr, PAGE);
         unsigned long ev = align_up((unsigned long)ph[i].p_vaddr + (unsigned long)ph[i].p_memsz, PAGE);
+        if (debug) {
+            sys_write(2, "[KLD.SO]:   PT_LOAD[", 20);
+            print_hex(2, NULL, i);
+            sys_write(2, "] vaddr=", 8);
+            print_hex(2, NULL, ph[i].p_vaddr);
+            sys_write(2, " memsz=", 7);
+            print_hex(2, NULL, ph[i].p_memsz);
+            sys_write(2, " aligned_range=", 15);
+            print_hex(2, NULL, sv);
+            sys_write(2, "-", 1);
+            print_hex(2, NULL, ev);
+            sys_write(2, "\n", 1);
+        }
         if (sv < min_v) min_v = sv;
         if (ev > max_v) max_v = ev;
     }
     if (min_v == ~0UL || max_v <= min_v) {
+        sys_write(2, "[KLD.SO]: map_interp_elf: no valid PT_LOAD segments found\n", 59);
         sys_munmap(file, (unsigned long)st.st_size);
         sys_close(fd);
         return -1;
     }
+    
+    if (debug) {
+        sys_write(2, "[KLD.SO]: map_interp_elf: found ", 33);
+        print_hex(2, NULL, pt_load_count);
+        sys_write(2, " PT_LOAD segments, range=", 26);
+        print_hex(2, NULL, min_v);
+        sys_write(2, "-", 1);
+        print_hex(2, NULL, max_v);
+        sys_write(2, "\n", 1);
+    }
 
     unsigned long span = max_v - min_v;
+    
+    if (debug) {
+        sys_write(2, "[KLD.SO]: map_interp_elf: reserving address space, span=", 57);
+        print_hex(2, NULL, span);
+        sys_write(2, "\n", 1);
+    }
+    
     void *reserve = sys_mmap((void *)0, span, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if ((long)reserve < 0) {
+        sys_write(2, "[KLD.SO]: map_interp_elf: failed to reserve address space\n", 59);
         sys_munmap(file, (unsigned long)st.st_size);
         sys_close(fd);
         return -1;
     }
     unsigned long load_base = (unsigned long)reserve - min_v;
+    
+    if (debug) {
+        sys_write(2, "[KLD.SO]: map_interp_elf: reserved at ", 39);
+        print_hex(2, NULL, (unsigned long)reserve);
+        sys_write(2, " load_base=", 12);
+        print_hex(2, NULL, load_base);
+        sys_write(2, "\n", 1);
+    }
+    
     if (sys_munmap(reserve, span) < 0) {
+        sys_write(2, "[KLD.SO]: map_interp_elf: failed to unmap reservation\n", 55);
         sys_munmap(file, (unsigned long)st.st_size);
         sys_close(fd);
         return -1;
     }
+    
+    if (debug) {
+        sys_write(2, "[KLD.SO]: map_interp_elf: mapping PT_LOAD segments\n", 52);
+    }
 
     for (int i = 0; i < eh->e_phnum; i++) {
         if (ph[i].p_type != PT_LOAD) continue;
+        
+        if (debug) {
+            sys_write(2, "[KLD.SO]:   Mapping PT_LOAD[", 28);
+            print_hex(2, NULL, i);
+            sys_write(2, "]\n", 2);
+        }
+        
         unsigned long voff = (unsigned long)ph[i].p_vaddr & (PAGE - 1);
         unsigned long map_addr = load_base + align_down((unsigned long)ph[i].p_vaddr, PAGE);
         unsigned long map_off = align_down((unsigned long)ph[i].p_offset, PAGE);
@@ -535,17 +788,36 @@ static int map_interp_elf(const char *interp_path,
         if (ph[i].p_flags & PF_W) prot |= PROT_WRITE;
         if (ph[i].p_flags & PF_X) prot |= PROT_EXEC;
 
+        if (debug) {
+            sys_write(2, "[KLD.SO]:     seg_start=", 24);
+            print_hex(2, NULL, seg_start);
+            sys_write(2, " seg_end=", 10);
+            print_hex(2, NULL, seg_end);
+            sys_write(2, " prot=", 6);
+            if (prot & PROT_READ) sys_write(2, "R", 1);
+            if (prot & PROT_WRITE) sys_write(2, "W", 1);
+            if (prot & PROT_EXEC) sys_write(2, "X", 1);
+            sys_write(2, "\n", 1);
+        }
+
         if (seg_end <= seg_start) {
+            if (debug) {
+                sys_write(2, "[KLD.SO]:     Skipping empty segment\n", 38);
+            }
             continue;
         }
 
         if (ph[i].p_filesz == 0) {
+            if (debug) {
+                sys_write(2, "[KLD.SO]:     Anonymous mapping (no file data)\n", 48);
+            }
             void *am = sys_mmap((void *)seg_start,
                                 seg_end - seg_start,
                                 prot,
                                 MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
                                 -1, 0);
             if ((long)am < 0) {
+                sys_write(2, "[KLD.SO]: map_interp_elf: anonymous mmap failed\n", 49);
                 sys_munmap(file, (unsigned long)st.st_size);
                 sys_close(fd);
                 return -1;
@@ -555,28 +827,50 @@ static int map_interp_elf(const char *interp_path,
 
         void *m = sys_mmap((void *)map_addr, file_len, prot, MAP_PRIVATE | MAP_FIXED, fd, map_off);
         if ((long)m < 0) {
+            sys_write(2, "[KLD.SO]: map_interp_elf: mmap of PT_LOAD segment failed\n", 58);
             sys_munmap(file, (unsigned long)st.st_size);
             sys_close(fd);
             return -1;
         }
+        
+        if (debug) {
+            sys_write(2, "[KLD.SO]:     Mapped at ", 24);
+            print_hex(2, NULL, (unsigned long)m);
+            sys_write(2, "\n", 1);
+        }
 
         if (ph[i].p_memsz > ph[i].p_filesz) {
+            if (debug) {
+                sys_write(2, "[KLD.SO]:     Has BSS section\n", 30);
+            }
             unsigned long bss_start = load_base + (unsigned long)ph[i].p_vaddr + (unsigned long)ph[i].p_filesz;
             unsigned long bss_end = load_base + (unsigned long)ph[i].p_vaddr + (unsigned long)ph[i].p_memsz;
             unsigned long first_full = align_up(bss_start, PAGE);
             if (first_full < bss_end) {
+                if (debug) {
+                    sys_write(2, "[KLD.SO]:       Mapping BSS pages ", 34);
+                    print_hex(2, NULL, first_full);
+                    sys_write(2, "-", 1);
+                    print_hex(2, NULL, align_up(bss_end, PAGE));
+                    sys_write(2, "\n", 1);
+                }
                 void *bm = sys_mmap((void *)first_full, align_up(bss_end, PAGE) - first_full, prot,
                                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
                 if ((long)bm < 0) {
+                    sys_write(2, "[KLD.SO]: map_interp_elf: BSS mmap failed\n", 43);
                     sys_munmap(file, (unsigned long)st.st_size);
                     sys_close(fd);
                     return -1;
                 }
             }
             if (bss_start < first_full) {
+                if (debug) {
+                    sys_write(2, "[KLD.SO]:       Zeroing partial BSS page\n", 41);
+                }
                 unsigned long partial_page = align_down(bss_start, PAGE);
                 if ((prot & PROT_WRITE) == 0 &&
                     sys_mprotect((void *)partial_page, PAGE, prot | PROT_WRITE) < 0) {
+                    sys_write(2, "[KLD.SO]: map_interp_elf: mprotect for BSS failed\n", 51);
                     sys_munmap(file, (unsigned long)st.st_size);
                     sys_close(fd);
                     return -1;
@@ -584,6 +878,7 @@ static int map_interp_elf(const char *interp_path,
                 my_memset((void *)bss_start, 0, (int)(first_full - bss_start));
                 if ((prot & PROT_WRITE) == 0 &&
                     sys_mprotect((void *)partial_page, PAGE, prot) < 0) {
+                    sys_write(2, "[KLD.SO]: map_interp_elf: mprotect restore for BSS failed\n", 60);
                     sys_munmap(file, (unsigned long)st.st_size);
                     sys_close(fd);
                     return -1;
@@ -594,6 +889,16 @@ static int map_interp_elf(const char *interp_path,
 
     *base_out = load_base;
     *entry_out = load_base + (unsigned long)eh->e_entry;
+    
+    if (debug) {
+        sys_write(2, "[KLD.SO]: map_interp_elf: success\n", 35);
+        sys_write(2, "[KLD.SO]:   base_out=", 21);
+        print_hex(2, NULL, *base_out);
+        sys_write(2, " entry_out=", 12);
+        print_hex(2, NULL, *entry_out);
+        sys_write(2, "\n", 1);
+    }
+    
     sys_munmap(file, (unsigned long)st.st_size);
     sys_close(fd);
     return 0;
@@ -739,14 +1044,34 @@ c_entry(int argc, char **argv, char *extraspace,
 
   
   unsigned long interp_base = 0, interp_entry = 0;
-  if (map_interp_elf(orig_interp, &interp_base, &interp_entry) < 0) {
+  if (map_interp_elf(orig_interp, &interp_base, &interp_entry, debug) < 0) {
     die_msg("[KLD.SO]: map_interp_elf failed");
   }
   if (patch_auxv_at_base(kld_initial_rsp, interp_base) < 0) {
     die_msg("[KLD.SO]: AT_BASE not found in auxv");
   }
-  if (init_gdb_rendezvous(kld_initial_rsp, argv, orig_interp, interp_base) < 0) {
+  
+  if (debug) {
+    sys_write(2, "[KLD.SO]: About to initialize GDB rendezvous\n", 46);
+    sys_write(2, "[KLD.SO]:   orig_interp=", 24);
+    if (orig_interp) {
+      sys_write(2, orig_interp, my_strlen(orig_interp));
+    } else {
+      sys_write(2, "(null)", 6);
+    }
+    sys_write(2, "\n", 1);
+    print_hex(2, "[KLD.SO]:   interp_base=", interp_base);
+    sys_write(2, "\n", 1);
+    print_hex(2, "[KLD.SO]:   interp_entry=", interp_entry);
+    sys_write(2, "\n", 1);
+  }
+  
+  if (init_gdb_rendezvous(kld_initial_rsp, argv, orig_interp, interp_base, debug) < 0) {
     die_msg("[KLD.SO]: failed to initialize GDB rendezvous");
+  }
+  
+  if (debug) {
+    sys_write(2, "[KLD.SO]: GDB rendezvous initialized successfully\n", 50);
   }
   handoff_to_interp(kld_initial_rsp, interp_entry);
   
