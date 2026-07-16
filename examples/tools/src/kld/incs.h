@@ -2,6 +2,8 @@
 #define __INCS_H__
 
 #include <stddef.h>
+#define FUSE_USE_VERSION FUSE_MAKE_VERSION(3, 12)
+#include <fuse_lowlevel.h>
 #include <stdlib.h>
 #include <string.h>
 #include <uthash.h>
@@ -14,8 +16,6 @@
 #include <unistd.h>
 #include <signal.h>
 #include <sys/signalfd.h>
-#include <sys/stat.h>
-#include <fcntl.h>
 #include <err.h>
 #include <stdbool.h>
 #include <assert.h>
@@ -26,10 +26,13 @@
 
 #include "event.h"
 #include "uthash.h"
+#include "fs.h"
+#include "sigproc.h"
 #include "globals.h"
 #include "misc.h"
 #include "kldelf.h"
 #include "modinfo.h"
+#include "kldfs.h"
 
 
 #endif

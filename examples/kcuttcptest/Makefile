@@ -7,7 +7,7 @@ O  := 2
 # lets go through these and make sure we understand what we really need -- if dpld logic
 # requires mitigations then let's stack switch extra as needed
 CFLAGS := -O${O} -ggdb -MD -MP -Wall -Wextra -Wfatal-errors -fPIC
-KFLAGS := -K ../kcutidt -K ../kcutef -K ../kcutevac  -K ../kcuttcp -k kcutidt.ko -k kcutef.ko -k kcutevac.ko -k kcuttcp.ko -k /proc/kallsyms
+KFLAGS := -K ../kcutidt -K ../kcutnmi -K ../kcutef -K ../kcutevac  -K ../kcuttcp -k kcutidt.ko -k kcutnmi.ko -k kcutef.ko -k kcutevac.ko -k kcuttcp.ko -k /proc/kallsyms
 
 KCUT_CFLAGS = $(CFLAGS) -D KCUT_TCP -I ../kcuttcp -I ../kcuttest -I ../kcutevac  -I ../../Symlib/include -DDYNLINK
 KCUT_LDFLAGS = -lc   ../../Symlib/build/L1/L1.a -L ../kcuttcp -L ../kcutevac -L. -lkcuttcp -l kcutevac -lkern 
@@ -23,7 +23,7 @@ esrv: esrv.o
 	$(CC) $(CFLAGS) -o $@ $< 
 
 libkern.so kotbl.bin: 
-	${KLD} -K ../kcutidt -K ../kcutef -K ../kcutevac -k kcutidt.ko -k kcutef.ko -k kcutevac.ko -k /proc/kallsyms
+	${KLD} ${KFLAGS}
 
 kcut_bpbs_esrv.o: esrv.c libkern.so kotbl.bin 
 	$(CC) $(KCUT_CFLAGS) -D BRACKET_PRIV -D BRACKET_STACK  -c -o $@ $<

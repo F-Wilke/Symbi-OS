@@ -3,11 +3,11 @@ KCC := ../tools/kcc
 KLD := ../tools/src/kld/kld
 O  := 2
 CFLAGS = -O${O} -ggdb -MD -MP -Wall -Wextra  -Wfatal-errors -fPIC
-CFLAGS += -I ../kcutef -I ../kcutevac -I ../../Symlib/include -DDYNLINK
-KFLAGS  = -K ../kcutidt -K ../kcutef -K ../kcutevac -k kcutidt.ko -k kcutef.ko -k kcutevac.ko -k /proc/kallsyms
+CFLAGS += -I ../kcutef -I ../kcutevac -I ../kcuttcp -I ../kcuttest -I ../../Symlib/include -DDYNLINK
+KFLAGS  = -K ../kcutidt -K ../kcutnmi -K ../kcutef -K ../kcutevac -K ../kcuttcp -k kcutidt.ko -k kcutnmi.ko -k kcutef.ko -k kcutevac.ko -k kcuttcp.ko -k /proc/kallsyms
 TARGET  := kcuttest
 KTARGET := kcuttest.ko 
-LIBS := -lc  ../../Symlib/build/L1/L1.a -L. -L ../kcutevac -l kcutevac -lkcuttest -lkern
+LIBS := -lc  ../../Symlib/build/L1/L1.a -L. -L ../kcutevac -L ../kcuttcp -l kcutevac -l kcuttcp -lkcuttest -lkern
 # -rdynamic exports executable symbols so dlsym(RTLD_DEFAULT, "user_add") works.
 # applink.o is linked directly (not via -lapp) to guarantee the constructor runs.
 LDFLAGS := -pie -rdynamic ${LIBS}

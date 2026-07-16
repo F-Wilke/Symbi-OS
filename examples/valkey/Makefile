@@ -15,14 +15,14 @@ TARGETS+=valkey/src/valkey-server-cpcs-evac valkey/src/valkey-server-bpcs-evac v
 TARGETS+=valkey/src/valkey-server-cpcs-evac-ds valkey/src/valkey-server-bpcs-evac-ds valkey/src/valkey-server-cpbs-evac-ds valkey/src/valkey-server-bpbs-evac-ds
 TARGETS+=valkey/src/valkey-server-cpcs-evac-ds-clean
 
+KLD_TARGETS=libkern.so kotbl.bin
 all: $(TARGETS)
 
 cachedkallsyms:
-	cp /proc/kallsyms cachedkallsyms
+	cp /proc/kallsyms $@
 
-libkern.so kotbl.bin: cachedkallsyms
-	${KLD} -S cachedkallsyms ${KFLAGS}
-	cp libkern.so ./libkern.valkey.so
+$(KLD_TARGETS): cachedkallsyms
+	${KLD} -S $< ${KFLAGS}
 
 valkey/src/valkey-server-cpcs: valkey/Makefile libkern.so kotbl.bin
 	make -C valkey clean
@@ -103,7 +103,7 @@ kcut/valkey.patch:valkey/src/Makefile valkey/src/socket.c valkey/src/server.c
 
 clean:
 	-make -C valkey clean
-	-${RM} -rf $(wildcard $(TARGETS) libkern.so kotbl.ko)
+	-${RM} -rf $(wildcard $(TARGETS) $(KLD_TARGETS))
 
 distclean: clean
 	-${RM} -rf $(wildcard valkey)

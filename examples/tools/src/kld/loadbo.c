@@ -4,7 +4,13 @@
 #include <sys/stat.h>
 #include "incs.h"
 #include "modinfo.h"
-#include "module_patch.h"
+
+// MODULE_NAME_LEN is defined in <linux/module.h> (kernel header, not
+// available in userspace).  The value has been 56 since at least Linux 2.6
+// and is stable across all kernel versions kld targets.
+#ifndef MODULE_NAME_LEN
+#define MODULE_NAME_LEN 56
+#endif
 
 // init_module and delete_module are Linux syscalls.
 // glibc does not expose them in public headers so we call them via syscall(2).
@@ -19,6 +25,77 @@ static int
 kld_delete_module(const char *name, unsigned int flags)
 {
   return (int)syscall(SYS_delete_module, name, flags);
+}
+
+// Patch the module name stored in .gnu.linkonce.this_module.
+//
+// The kernel uses struct module.name (a char[MODULE_NAME_LEN] field near
+// the start of that section) as the definitive module name for lsmod and
+// rmmod.  Rather than hard-coding the struct field offset (which varies
+// between kernel versions), we scan the section bytes for orig_name and
+// replace it in-place, zeroing the remainder of the fixed-size field.
+//
+// image must be a writable mapping (MAP_PRIVATE).
+// Returns 0 if the name was found and patched, -1 otherwise.
+static int
+patch_module_name(void *image, size_t image_size,
+                  const char *orig_name, const char *new_name)
+{
+  size_t orig_len = strlen(orig_name);
+  size_t new_len  = strlen(new_name);
+
+  if (new_len >= MODULE_NAME_LEN) {
+    EPRINT(stderr, "module name '%s' too long (max %d chars)\n",
+           new_name, MODULE_NAME_LEN - 1);
+    return -1;
+  }
+
+  elf_version(EV_CURRENT);
+  Elf *elf = elf_memory((char *)image, image_size);
+  if (!elf) {
+    EPRINT(stderr, "elf_memory: %s\n", elf_errmsg(-1));
+    return -1;
+  }
+
+  size_t shstrndx;
+  if (elf_getshdrstrndx(elf, &shstrndx) != 0) {
+    elf_end(elf);
+    return -1;
+  }
+
+  int      rc  = -1;
+  Elf_Scn *scn = NULL;
+  while ((scn = elf_nextscn(elf, scn)) != NULL) {
+    GElf_Shdr shdr;
+    if (gelf_getshdr(scn, &shdr) == NULL) continue;
+    const char *sname = elf_strptr(elf, shstrndx, shdr.sh_name);
+    if (!sname || strcmp(sname, ".gnu.linkonce.this_module") != 0) continue;
+
+    if (shdr.sh_offset + shdr.sh_size > (Elf64_Off)image_size) break;
+
+    // Patch directly in the raw image bytes at the section's file offset
+    // to avoid any libelf buffering or byte-order translation concerns.
+    char  *sec = (char *)image + shdr.sh_offset;
+    size_t ssz = (size_t)shdr.sh_size;
+
+    for (size_t i = 0; i + orig_len < ssz; i++) {
+      if (memcmp(&sec[i], orig_name, orig_len + 1) == 0) {
+        size_t field_sz = MODULE_NAME_LEN;
+        if (i + field_sz > ssz) field_sz = ssz - i;
+        memset(&sec[i], 0, field_sz);      // zero the whole name field
+        memcpy(&sec[i], new_name, new_len);
+        rc = 0;
+        break;
+      }
+    }
+    break; // section found; stop regardless
+  }
+
+  elf_end(elf);
+  if (rc < 0)
+    EPRINT(stderr, "name '%s' not found in .gnu.linkonce.this_module\n",
+           orig_name);
+  return rc;
 }
 
 // Attempt init_module and handle EEXIST according to kldopts.
@@ -132,7 +209,7 @@ loadBO(bo_t *bo)
     if (orig) {
       VPRINT("%s: patching module name '%s' -> '%s'\n",
              bo->kofnm, orig, bo->modnm);
-      if (kld_patch_module_name_image(map, sz, orig, bo->modnm) < 0) {
+      if (patch_module_name(map, sz, orig, bo->modnm) < 0) {
         EPRINT(stderr, "%s: could not patch module name\n", bo->kofnm);
         kld_free_modinfo(&mi);
         munmap(map, sz);

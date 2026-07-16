@@ -2,7 +2,7 @@ KCC    := $(realpath ../tools/kcc)
 KLD    := $(realpath ../tools/src/kld/kld)
 
 KALLSYMS_PATH ?= /proc/kallsyms
-KFLAGS       := -S $(KALLSYMS_PATH) -K $(realpath ../kcutidt) -K $(realpath ../kcutnmi) -K $(realpath ../kcutef) -K $(realpath ../kcutevac)  -K $(realpath ../kcuttcp) -k kcutidt.ko -k kcutnmi.ko -k kcutef.ko -k kcutevac.ko -k kcuttcp.ko -k /proc/kallsyms
+KFLAGS       := -K $(realpath ../kcutidt) -K $(realpath ../kcutnmi) -K $(realpath ../kcutef) -K $(realpath ../kcutevac)  -K $(realpath ../kcuttcp) -k kcutidt.ko -k kcutnmi.ko -k kcutef.ko -k kcutevac.ko -k kcuttcp.ko -k /proc/kallsyms
 KLDFLAGS     := -t $(PWD)/kotbl.bin
 KCUT_CFLAGS  := $(CFLAGS) -D KCUT_TCP -I $(realpath ../kcuttcp) -I $(realpath ../kcuttest) -I $(realpath ../kcutevac)  -I $(realpath ../../Symlib/include) -DDYNLINK
 
@@ -17,9 +17,11 @@ KLD_TARGETS=libkern.so kotbl.bin
 
 all: $(TARGETS)
 
-$(KLD_TARGETS):
-	${KLD} ${KFLAGS}
-	cp libkern.so ./libkern.valkey.so
+cachedkallsyms:
+	cp /proc/kallsyms $@
+
+$(KLD_TARGETS): cachedkallsyms
+	${KLD} -S $< ${KFLAGS}
 
 memcached/memcached-cpcs: memcached/Makefile $(KLD_TARGETS)
 	make -C memcached clean
@@ -77,7 +79,7 @@ kcut/memcached.patch:memcached/Makefile.am memcached/memcached.c memcached/threa
 
 clean:
 	make -C memcached clean
-	-${RM} -rf $(wildcard $(TARGETS) libkern.so kotbl.ko)
+	-${RM} -rf $(wildcard $(TARGETS) $(KLD_TARGETS))
 
 distclean: 
 	-${RM} -rf $(wildcard memcached)

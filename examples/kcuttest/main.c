@@ -10,7 +10,7 @@
 #include "greeter.kh"
 #include "evacuate.kh"
 #include "efadaptor.kh"
-
+#include "kcut_tcpmsg.h"
 
 #include "ktos.h"
 #include "evacuate.h"
@@ -315,6 +315,10 @@ int main(int argc, char **argv) {
   
   printf("\t\t%d: %lx: E0 INTERRUPT TEST: END\n", mypid, cr3);
 
+  printf("\t\t%d: %lx: kcuttcp reference: BEGIN\n", mypid, cr3);
+  printf("kcut_tcp_recvmsg: %p\n", (void *)&kcut_tcp_recvmsg);
+  printf("\t\t%d: %lx: kcuttcp reference: end\n", mypid, cr3);
+  
   symbi_fast_lower();
 
   if (evac) kcut_evacuate(0);

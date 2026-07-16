@@ -1,7 +1,4 @@
 #include "incs.h"
-#include "runtime_kotbl.h"
-
-extern char **environ;
 
 globals_t GBLS = {
   .bosbypath      = NULL,
@@ -10,15 +7,17 @@ globals_t GBLS = {
   .buildexe       = NULL,
   .kotblfile      = KOTBL_DFLT,
   .dirs           = NULL,
+  .fsname         = FSNAME_DFLT,
   .libkernpath    = NULL,
   .kallsymspath   = NULL,
+  .pid            = 0,
   .dirc           = 0,
   .dirmax         = 0,
   .verbose        = 0,
+  .startfs        = 0,
   .prockallsyms   = 0,
   .procbos        = 1,
-  .resetinterp    = 0,
-  .noexec         = 0
+  .resetinterp    = 0
 };
 
 static void
@@ -47,9 +46,6 @@ usage(char *name, FILE *fp)
 	  "   -R     : for executable argument, toggle interpreter:\n"
 	  "            if current is %s, restore from %s (required)\n"
 	  "            otherwise install %s\n"
-	  "   -N     : dry-run: print exec info instead of execve'ing\n"
-	  "   kldd <elf> : when invoked as 'kldd', inspect .kotbl and\n"
-	  "                print planned module load/.so patch actions\n"
 	  "   elf    : optional elf file to process as follows:\n"
 	  "              For each libk found in the elf:\n"
 	  "                 find coresponding ko and load it\n"
@@ -65,25 +61,32 @@ usage(char *name, FILE *fp)
 	  TOSTRING(KLDSO_PATH_DFLT));
 }
 
-static void
-format_kldopts(kldopts_t opts, char *buf, size_t bufsz)
+struct KLDOPT_DESC {
+  char      *optstr;
+  kldopts_t  optval;
+} KLDOPT_TBL[] = {
+  { .optstr = "SHARED",  .optval = KLDOPT_SHARED  },
+  { .optstr = "PERPROC", .optval = KLDOPT_PERPROC },
+  { .optstr = "RELOAD",  .optval = KLDOPT_RELOAD  },
+  { .optstr =  NULL,     .optval = KLDOPT_NONE    }
+};
+  
+static kldopts_t
+parseOpts(char *kldoptstr)
 {
-  int off = 0;
-  if (bufsz == 0) return;
-  buf[0] = '\0';
-  if (opts & KLDOPT_SHARED) {
-    off += snprintf(buf + off, (off < (int)bufsz) ? bufsz - (size_t)off : 0,
-                    "%sshared", off ? "|" : "");
+  struct KLDOPT_DESC *optdesc;
+  kldopts_t           val = KLDOPT_NONE;
+  
+  for (optdesc = &(KLDOPT_TBL[0]);
+       optdesc->optstr != NULL;
+       optdesc++) {
+    if (strcmp(optdesc->optstr, kldoptstr) == 0) {
+      val = optdesc->optval;
+      break;
+    }
   }
-  if (opts & KLDOPT_PERPROC) {
-    off += snprintf(buf + off, (off < (int)bufsz) ? bufsz - (size_t)off : 0,
-                    "%sperproc", off ? "|" : "");
-  }
-  if (opts & KLDOPT_RELOAD) {
-    off += snprintf(buf + off, (off < (int)bufsz) ? bufsz - (size_t)off : 0,
-                    "%sreload", off ? "|" : "");
-  }
-  if (off == 0) snprintf(buf, bufsz, "none");
+  VLPRINT(2, "kld opt: %s -> %lu\n", kldoptstr, val); 
+  return val;
 }
 
 static int
@@ -159,6 +162,29 @@ openso(char *kofnm, char *modnm, char **sofullpath, int readonly)
 }
 
 
+#if 0
+// not used
+// if you want to support using the file name as a default
+// then resurrect 
+static char
+*modnmfromfnm(char *fnm)
+{
+  char *tmp   = strdup(fnm);
+  char *base  = basename(tmp);
+  char *modnm = NULL;
+  int      i = 0;
+
+  for (i=0; base[i]!='\0'; i++);
+  // remove '.ko' extension 
+  if (i>3 && base[i-3]=='.' && base[i-2]=='k' && base[i-1]=='o') {
+    base[i-3]='\0';
+  }
+  modnm = strdup(base);  // make a copy in new memory to pass back
+  free(tmp);
+  return modnm;
+}
+#endif
+
 static int
 parsekospec(const char *kospec, char **fnm, char **kldopts,
 	    char **modnm)
@@ -230,7 +256,7 @@ newbo(char *kofullpath, char *modnm, char *komodnm, int forcemodnm,
   return bo;
 }
 
-static void
+__attribute__((unused)) static void
 deletebo(bo_t *bo)
 {
   if (bo) {
@@ -288,8 +314,7 @@ addbo(char *kofnm,char *kldopts,char *modnm, bo_t **thebo, int readonly,
       if (kldopts == NULL) {// if not null will be taken care of below
 	// use kld opts from modinfo 
 	for (int i=0; i<mi.kld_count; i++) {
-	  opts |= (kldopts_t)kld_parse_kldopts_bits(mi.kld_vals[i],
-						     (int)strlen(mi.kld_vals[i]));
+	  opts |= parseOpts(mi.kld_vals[i]); 
 	}
       }
     }
@@ -298,7 +323,19 @@ addbo(char *kofnm,char *kldopts,char *modnm, bo_t **thebo, int readonly,
   assert(modnm!=NULL);   // one way or another modnm must be set
 
   if (kldopts) { // if kldopts str passed in use these
-    opts |= (kldopts_t)kld_parse_kldopts_bits(kldopts, (int)strlen(kldopts));
+    for (char *ob = kldopts, *oe = kldopts; ; oe++) {
+      if (*oe == '\0' && *ob != '\0') {
+	opts |= parseOpts(ob);
+	break;
+      }
+      if (*oe == '|') {
+	assert(*ob != '\0');
+	*oe = '\0';  // temporarily convert '|' to null
+	opts |= parseOpts(ob);
+	*oe = '|';   // restore '|'
+      }
+      oe++;
+    }
   }
     
   if (opts == KLDOPT_NONE) {  // no options set by cli/kotbl or module
@@ -393,6 +430,16 @@ GBLSInit(int argc, char **argv)
   int    kospecmax = 0;
   int    rc        = 0;;
   
+  // init objects to ensure cleanup is safe at any point
+  assert(fsInit(&GBLS.fs,
+		false,   // init mount point
+		NULL,    // mount point prefix
+		true));  // zero out and reset all fields
+
+  // This is a kludge but I don't want to rewrite sigprocInit
+  sigprocReset(&(GBLS.sigproc),
+	       true);    // zero out and reset all fields
+  
   if (getcwd(GBLS.cwd, sizeof(GBLS.cwd)) == NULL) {
     fprintf(stderr, "ERROR: failed to get cwd\n");
     rc=-1;
@@ -400,7 +447,7 @@ GBLSInit(int argc, char **argv)
   }
   addDir(GBLS.cwd);
   
-  while ((opt = getopt(argc, argv, "K:k:O:o:NRS:t:hv")) != -1) {
+  while ((opt = getopt(argc, argv, "K:k:O:o:RS:t:hv")) != -1) {
     switch (opt) {
     case 'K':
       addDir(optarg);
@@ -430,9 +477,6 @@ GBLSInit(int argc, char **argv)
 	kospec[kospecc] = optarg;
 	kospecc++;
       }
-      break;
-    case 'N':
-      GBLS.noexec = 1;
       break;
     case 'R':
       GBLS.resetinterp = 1;
@@ -514,6 +558,15 @@ GBLSInit(int argc, char **argv)
     VLPRINT(2, "GBLS.executable=%s\n", GBLS.executable);
   }
 
+  if (GBLS.startfs) {
+    GBLS.pid = getpid();
+    assert(fsInit(&GBLS.fs,
+		  true,   // init mount point
+		  NULL,   // mount point prefix
+		  false)); // all ready done
+    sigprocInit(&(GBLS.sigproc), true);
+  }
+  
 done:
   if (kospec) free(kospec);
   return rc;
@@ -565,6 +618,40 @@ writeso(const char *path, int fd, const kld_sym *entries, size_t n,
   close(mfd);
   return rc;
 }
+
+#if 0
+/** FROM: Gemini
+ * Creates directories recursively for a given path.
+ * Returns 0 on success, -1 on failure.
+ */
+static
+int mkpath(const char *path, mode_t mode) {
+    char *temp_path = strdup(path);
+    if (!temp_path) return -1;
+
+    for (char *p = temp_path + 1; *p; p++) {
+        if (*p == '/') {
+            *p = '\0'; // Temporarily truncate at current directory level
+            if (mkdir(temp_path, mode) == -1 && errno != EEXIST) {
+                free(temp_path);
+                return -1;
+            }
+            *p = '/'; // Restore delimiter
+        }
+    }
+    mode_t old_mask = umask(0);
+    // Create the final level
+    if (mkdir(temp_path, mode) == -1 && errno != EEXIST) {
+        free(temp_path);
+	umask(old_mask);
+        return -1;
+    }
+    umask(old_mask);
+    free(temp_path);
+    return 0;
+}
+/****/
+#endif
 
 static int
 openKallsyms(FILE **fp, char *path)
@@ -1072,7 +1159,7 @@ prcKallsyms(FILE *fp, char **kernpath)
     } else {
       update_so_runtime(GBLS.libkernpath, kentries, ksyms_i, knmstrlen);
     }
-    if (GBLS.buildexe) {
+    if (GBLS.buildexe && !GBLS.executable) {
       const char *ksname = strrchr(GBLS.libkernpath, '/');
       ksname = ksname ? ksname + 1 : GBLS.libkernpath;
       kld_undef_elf_dynsym(GBLS.buildexe, ksname, kentries, ksyms_i);
@@ -1120,7 +1207,7 @@ prcKallsyms(FILE *fp, char **kernpath)
         update_so_runtime(mod->bo->sofnm, mod->entries,
                           mod->syms_i, mod->nmstrlen);
       }
-      if (GBLS.buildexe) {
+      if (GBLS.buildexe && !GBLS.executable) {
         const char *msname = strrchr(mod->bo->sofnm, '/');
         msname = msname ? msname + 1 : mod->bo->sofnm;
         kld_undef_elf_dynsym(GBLS.buildexe, msname, mod->entries, mod->syms_i);
@@ -1133,6 +1220,17 @@ prcKallsyms(FILE *fp, char **kernpath)
   }
 
   free(line);
+}
+
+static void
+sigprocCleanup(sigproc_t *this)
+{
+  VPRINT("%p\n", this);
+  if (this->sfd != -1) {
+    close(this->sfd);
+    this->sfd = -1;
+    sigemptyset(&this->mask);
+  }
 }
 
 static void
@@ -1150,6 +1248,11 @@ bosCleanup()
 static void
 cleanup(void)
 {
+  if (GBLS.startfs)  {
+    fsCleanup(&(GBLS.fs));
+    sigprocCleanup(&(GBLS.sigproc));
+  }
+  
   if (GBLS.bosbypath) {
     bosCleanup();
     GBLS.bosbypath = NULL;
@@ -1180,7 +1283,7 @@ prcBO(bo_t *bo)
     rc = -1;
     goto done;
   }
-  if (GBLS.buildexe) {
+  if (GBLS.buildexe && !GBLS.executable) {
     const char *bsname = strrchr(bo->sofnm, '/');
     bsname = bsname ? bsname + 1 : bo->sofnm;
     kld_undef_elf_dynsym(GBLS.buildexe, bsname, entries, n);
@@ -1194,14 +1297,44 @@ prcBO(bo_t *bo)
 
 extern int loadBO(bo_t *bo);
 
-static char *
-dup_field(const char *s, int n)
+static size_t
+parsekotbl(char *kotblnxt,  char **kofnm, char **modnm, char **koopts)
 {
-  char *d = malloc((size_t)n + 1);
-  assert(d);
-  memcpy(d, s, (size_t)n);
-  d[n] = '\0';
-  return d;
+  assert(kotblnxt != NULL);
+  assert(*kofnm   == NULL);
+  assert(*koopts  == NULL);
+  assert(*modnm   == NULL);
+  size_t n,nn;
+  char *ptr = kotblnxt;
+
+ 
+  // Loop until -1 is returned (EOF or error)
+  n = strlen(ptr);
+  if (n==0) { nn=0; goto done; }
+  *kofnm = strdup(ptr);
+  ptr += (n+1); // +1 to skip null
+  nn   = (n+1);
+  
+  n = strlen(ptr);
+  if (n>0) { 
+    *modnm = strdup(ptr);
+  }
+  ptr += (n+1); // +1 to skip null
+  nn  += (n+1);
+  
+  n = strlen(ptr);
+  if (n>0) {
+    *koopts = strdup(ptr);
+  }
+  ptr += (n+1); // +1 to skip null
+  nn  += (n+1);
+ done:
+  if (nn==0) {
+    if (*kofnm)  free(*kofnm);
+    if (*modnm)  free(*modnm);
+    if (*koopts) free(*koopts);
+  }
+  return nn;
 }
 
 static void
@@ -1248,6 +1381,35 @@ maybe_install_kldso_interp(const char *exe)
   if (kld_set_interp(exe, TOSTRING(KLDSO_PATH_DFLT)) < 0) {
     fprintf(stderr, "WARNING: failed to set interpreter for %s\n", exe);
   }
+}
+
+static int
+get_exec_orig_interp(const char *exe, char *buf, size_t bufsz)
+{
+  kld_secdata sd;
+  if (kld_open_elf_secdata(&sd, exe, -1, KOTBL_INTERP_SEC) >= 0) {
+    size_t n = sd.size;
+    if (n >= bufsz) n = bufsz - 1;
+    memcpy(buf, sd.data, n);
+    buf[n] = '\0';
+    kld_close_elf_secdata(&sd, -1);
+    if (buf[0]) return 0;
+  }
+  return kld_get_interp(exe, buf, bufsz);
+}
+
+/* Strict version for -R: requires KOTBL_INTERP_SEC to be present and non-empty. */
+static int
+get_exec_saved_orig_interp(const char *exe, char *buf, size_t bufsz)
+{
+  kld_secdata sd;
+  if (kld_open_elf_secdata(&sd, exe, -1, KOTBL_INTERP_SEC) < 0) return -1;
+  size_t n = sd.size;
+  if (n >= bufsz) n = bufsz - 1;
+  memcpy(buf, sd.data, n);
+  buf[n] = '\0';
+  kld_close_elf_secdata(&sd, -1);
+  return (buf[0] != '\0') ? 0 : -1;
 }
 
 /* read_file_buf - read an entire file into a malloc'd buffer.
@@ -1300,19 +1462,15 @@ prcExec(const char *exec, int buildtime, char **ldpath_out)
   if (rc>=0) {
     VLPRINT(2, "%s:%s mapped\n", exec, KOTBL_SEC);
     char *kotbl = (char *)sd.data;
-    size_t size = sd.size, nn=0;
+    size_t size = sd.size, n, nn=0;
     char *fnm, *modnm, *opts;
     int i=0;
-    kld_kotbl_ent ent;
   
-    while (1) {
-      int krc = kld_kotbl_next(kotbl, size, &nn, &ent);
-      if (krc == 0) break;
-      if (krc < 0) { rc = -1; goto done; }
+    while (nn<size) {
       fnm = modnm = opts = NULL;
-      fnm = dup_field(ent.fnm, ent.fnm_len);
-      if (ent.modnm_len > 0) modnm = dup_field(ent.modnm, ent.modnm_len);
-      if (ent.opts_len > 0) opts = dup_field(ent.opts, ent.opts_len);
+      n = parsekotbl(&(kotbl[nn]), &fnm, &modnm, &opts);
+      if (n == 0) break;
+      nn+=n;
       VLPRINT(2, "kotbl[%d]: fnm:%s modnm:%s opts:%s\n", i, fnm,
 	      modnm, opts);
 
@@ -1403,59 +1561,34 @@ kldd(int argc, char **argv)
   char *exec;
   int rc;
 
-  if (strcmp("kldd", basename(argv[0])) != 0) return 0;
-
+  if (strcmp("kldd",basename(argv[0])) != 0) return 0;
+  
   if (argc != 2) {
     fprintf(stderr, "ERROR: no input file\nkldd <file>\n");
     return -1;
   }
   exec = argv[1];
-
+  
   rc = kld_open_elf_secdata(&sd, exec, -1, KOTBL_SEC);
-  if (rc >= 0) {
+  
+  if (rc>=0) {
     char *kotbl = (char *)sd.data;
-    size_t size = sd.size, nn = 0;
+    size_t size = sd.size, n, nn=0;
     char *fnm, *modnm, *opts;
-    kld_kotbl_ent ent;
     VLPRINT(2, "%s:%s mapped\n", exec, KOTBL_SEC);
-
-    while (1) {
-      int krc = kld_kotbl_next(kotbl, size, &nn, &ent);
-      if (krc == 0) break;
-      if (krc < 0) { rc = -1; break; }
+  
+    while (nn<size) {
       fnm = modnm = opts = NULL;
-      fnm = dup_field(ent.fnm, ent.fnm_len);
-      if (ent.modnm_len > 0) modnm = dup_field(ent.modnm, ent.modnm_len);
-      if (ent.opts_len > 0) opts = dup_field(ent.opts, ent.opts_len);
-
-      if (modnm && strcmp(modnm, KALLSYMSPATH) == 0) {
-        printf("kallsyms-so=%s action=patch-runtime-symbols\n", fnm);
-        free(fnm);
-        free(modnm);
-        free(opts);
-        continue;
-      }
-
-      bo_t *bo = NULL;
-      if (addbo(fnm, opts, modnm, &bo, 1, 0) < 0 || !bo) {
-        fprintf(stderr, "WARNING: cannot resolve runtime plan for %s\n", fnm);
-        free(fnm);
-        free(modnm);
-        free(opts);
-        rc = -1;
-        continue;
-      }
-      {
-        char opts_txt[64];
-        format_kldopts(bo->kldopts, opts_txt, sizeof(opts_txt));
-        printf("ko=%s mod=%s opts=%s so=%s actions=load-ko,patch-so\n",
-               bo->kofnm, bo->modnm, opts_txt, bo->sofnm);
-      }
-      deletebo(bo);
-      free(bo);
+      n = parsekotbl(&(kotbl[nn]), &fnm, &modnm, &opts);
+      if (n == 0) break;
+      nn+=n;
+      printf("%s\n", fnm);
+      if (fnm) free(fnm);
+      if (modnm) free(modnm);
+      if (opts) free(opts);
     }
-    kld_close_elf_secdata(&sd, -1);
-    if (rc == 0) rc = 1;
+    kld_close_elf_secdata(&sd,-1);
+    rc = 1;
   } else {
     rc = -1;
   }
@@ -1472,8 +1605,8 @@ main(int argc, char **argv)
   {
     int rc = kldd(argc, argv);
     if (rc != 0) {
-      if (rc > 0) return EXIT_SUCCESS;
-      EEXIT();
+      if (rc>0) return EXIT_SUCCESS;
+      else EEXIT();
     }
   }
   
@@ -1489,10 +1622,74 @@ main(int argc, char **argv)
                    !GBLS.prockallsyms);
 
   if (GBLS.executable) {
-    fprintf(stderr,
-            "ERROR: runtime execution path moved to kld.so; "
-            "invoke the target directly with kld.so as PT_INTERP\n");
-    EEXIT();
+    char *ldpath = NULL;
+    char originterp[PATH_MAX] = {0};
+    char interp[PATH_MAX] = {0};
+    if (GBLS.resetinterp) {
+      int have_saved_orig = 0;
+      if (kld_get_interp(GBLS.executable, interp, sizeof(interp)) == 0) {
+	printf("current interpreter: %s\n", interp);
+      } else {
+	fprintf(stderr, "ERROR: failed to determine interpreter"
+		" for %s\n", GBLS.executable);
+	EEXIT();
+      }
+
+      if (strcmp(interp, TOSTRING(KLDSO_PATH_DFLT)) == 0) {
+	if (get_exec_saved_orig_interp(GBLS.executable, originterp, sizeof(originterp)) == 0) {
+	  have_saved_orig = 1;
+	  printf("original interpreter: %s\n", originterp);
+	} else {
+	  fprintf(stderr, "ERROR: missing %s in %s; cannot restore from %s\n",
+		  KOTBL_INTERP_SEC, GBLS.executable, TOSTRING(KLDSO_PATH_DFLT));
+	  EEXIT();
+	}
+	printf("Restoring original interpreter.\n");
+	if (kld_set_interp(GBLS.executable, originterp) < 0) {
+	  fprintf(stderr, "ERROR: failed to set %s as interpreter\n",
+		  originterp);
+	  EEXIT();
+	}
+      } else {
+	if (get_exec_saved_orig_interp(GBLS.executable, originterp, sizeof(originterp)) == 0) {
+	  have_saved_orig = 1;
+	  printf("original interpreter: %s\n", originterp);
+	}
+	if (have_saved_orig && strcmp(interp, originterp) != 0) {
+	  fprintf(stderr,
+		  "WARNING: don't recognize current interpreter %s (saved original %s)\n",
+		  interp, originterp);
+	  EEXIT();
+	}
+	printf("Installing %s as interpreter\n",
+	       TOSTRING(KLDSO_PATH_DFLT));
+	if (kld_set_interp(GBLS.executable, TOSTRING(KLDSO_PATH_DFLT)) < 0) {
+	  fprintf(stderr, "ERROR: failed to set %s as interpreter\n",
+		  TOSTRING(KLDSO_PATH_DFLT));
+	  EEXIT();
+	}
+      }
+      return EXIT_SUCCESS;
+    } else {
+      prcExec(GBLS.executable, 0, &ldpath);
+      if (get_exec_orig_interp(GBLS.executable, interp, sizeof(interp)) == 0) {
+	char *execpath = realpath(GBLS.executable, NULL);
+	const char *ep = execpath ? execpath : GBLS.executable;
+	const char *lp = (ldpath && ldpath[0]) ? ldpath : "";
+	/* Structured output for kldso.sh: interp\0execpath\0ldpath\0 */
+	fwrite(interp, 1, strlen(interp), stdout);
+	fwrite("\0",1, 1, stdout);
+	fwrite(ep, 1, strlen(ep), stdout);
+	fwrite("\0",1, 1, stdout);
+	fwrite(lp, 1, strlen(lp), stdout);
+	fwrite("\0",1, 1, stdout);
+	if (execpath) free(execpath);
+      } else {
+	fprintf(stderr, "ERROR: failed to determine interpreter for %s\n",
+		GBLS.executable);
+      }
+    }
+    if (ldpath) free(ldpath);
   } else if (no_kflags) {
     /* No-KFLAGS build-time mode:
        1. embed existing kotbl.bin as .kotbl ELF section
@@ -1544,28 +1741,28 @@ main(int argc, char **argv)
   }
   
   // we do this last so that ko loads will be reflected in so updates
-    if (GBLS.prockallsyms) {
-      char *kernpath;
-      if (openKallsyms(&ksfp, GBLS.kallsymspath)<0) {
+  if (GBLS.prockallsyms) {
+    char *kernpath;
+    if (openKallsyms(&ksfp, GBLS.kallsymspath)<0) {
       fprintf(stderr, "ERROR: failed to open kallsyms\n");
       EEXIT();
     }
     prcKallsyms(ksfp, &kernpath);
-
+    
     if (kotblf) {
-	size_t n = strlen(kernpath);
-	assert(1==fwrite(kernpath,n,1,kotblf));
-	assert(1==fwrite("\0",1,1,kotblf));
-	n = strlen(KALLSYMSPATH);
-	assert(1==fwrite(KALLSYMSPATH,n,1,kotblf));
-	assert(1==fwrite("\0",1,1,kotblf));
-	assert(1==fwrite("\0",1,1,kotblf));
+      size_t n = strlen(kernpath);
+      assert(1==fwrite(kernpath,n,1,kotblf));
+      assert(1==fwrite("\0",1,1,kotblf));
+      n = strlen(KALLSYMSPATH);
+      assert(1==fwrite(KALLSYMSPATH,n,1,kotblf));
+      assert(1==fwrite("\0",1,1,kotblf));
+      assert(1==fwrite("\0",1,1,kotblf));
     }
     fclose(ksfp);
   }
-
+  
   if (kotblf) fclose(kotblf);
-
+  
   /* KFLAGS + buildexe path: embed the newly-written kotbl.bin into the
      executable as .kotbl section (replaces the separate kldinst step). */
   if (GBLS.buildexe && !GBLS.executable && !no_kflags) {
@@ -1577,6 +1774,13 @@ main(int argc, char **argv)
       maybe_install_kldso_interp(GBLS.buildexe);
     }
   }
-
+  
+  // optionally expose objects via synthetic filesystem
+  // This support has not been completed.
+  if (GBLS.startfs) {
+    if (!fsCreate(&(GBLS.fs), argv[0], kldfsCreate)) EEXIT();
+    if (!kldfsLoop(&GBLS.fs, &GBLS.sigproc)) EEXIT();
+  }
+  
   return EXIT_SUCCESS;
 }

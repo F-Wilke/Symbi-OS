@@ -1,3 +1,4 @@
+#include <linux/module.h>
 #include <linux/printk.h> 
 #include <linux/module.h> 
 #include "nmiadaptor.h"
@@ -11,6 +12,8 @@ EXPORT_SYMBOL(nmi_asm_check_ist7);
 #ifdef DEBUG
 extern int nmi_asm_debug(int normalNMI);
 #endif
+
+int extension_init(void);
 
 int extension_init(void)
 {
@@ -28,5 +31,4 @@ int extension_init(void)
 
     return 0;
 }
-
 MODULE_INFO(kld, "SHARED");
