@@ -16,7 +16,19 @@
 #define WIFEXITED_LOCAL(st)   (((st) & 0x7f) == 0)
 #define WEXITSTATUS_LOCAL(st) (((st) >> 8) & 0xff)
 
-// some code from gemini
+static int   debug=0;
+// some code from copilot (with various model -- mostly GPT 5.3 Codex)
+
+static unsigned long
+align_down(unsigned long v, unsigned long a) {
+  return v & ~(a - 1);
+}
+
+static unsigned long
+align_up(unsigned long v, unsigned long a) {
+  return (v + a - 1) & ~(a - 1);
+}
+
 
 /* --- 1. Minimal Syscall Wrappers --- */
 static inline long sys_write(int fd, const char *buf, unsigned long len) {
@@ -228,21 +240,13 @@ char *get_env_value(char **envp, const char *key) {
 #define TOSTRING(x) STRINGIFY(x)
 
 /* --- kld so helpers ---- */
-static unsigned long
-align_down(unsigned long v, unsigned long a) {
-  return v & ~(a - 1);
-}
-
-static unsigned long
-align_up(unsigned long v, unsigned long a) {
-  return (v + a - 1) & ~(a - 1);
-}
 
 static void die_msg(const char *m) {
     sys_write(2, m, (unsigned long)my_strlen(m));
     sys_write(2, "\n", 1);
     sys_exit(1);
 }
+
 
 
 static int parse_kld_triplet(char *buf, long n,
@@ -279,7 +283,6 @@ static int parse_kld_triplet(char *buf, long n,
 
 static int run_kldso_sh(const char *script_path,
 			int argc, char **argv, char **envp,
-			int debug,
 			char *outbuf, unsigned long outcap,
 			long *outn) {
   int pfds[2];
@@ -445,10 +448,12 @@ patch_dt_debug_ptr(void *initial_rsp, kld_r_debug *rd, int debug)
         sys_write(2, "\n", 1);
     }
 
+    int found_pt_phdr = 0;
     unsigned long load_bias = 0;
     for (unsigned long i = 0; i < phnum; i++) {
         if (phdr[i].p_type == PT_PHDR) {
             load_bias = (unsigned long)phdr - (unsigned long)phdr[i].p_vaddr;
+	    found_pt_phdr = 1;
             break;
         }
     }
@@ -459,6 +464,10 @@ patch_dt_debug_ptr(void *initial_rsp, kld_r_debug *rd, int debug)
         sys_write(2, "\n", 1);
     }
 
+    if (!found_pt_phdr) {
+      load_bias = 0;
+    }
+    
     Elf64_Dyn *dyn = NULL;
     for (unsigned long i = 0; i < phnum; i++) {
         if (debug) {
@@ -512,7 +521,7 @@ patch_dt_debug_ptr(void *initial_rsp, kld_r_debug *rd, int debug)
                 sys_write(2, "\n", 1);
             }
         }
-        return -1;
+        return -3;
     }
     
     if (debug) {
@@ -535,7 +544,7 @@ patch_dt_debug_ptr(void *initial_rsp, kld_r_debug *rd, int debug)
         }
     }
     sys_write(2, "[KLD.SO]: patch_dt_debug_ptr: DT_DEBUG not found in .dynamic\n", 62);
-    return -1;
+    return -4;
 }
 
 static int
@@ -943,7 +952,6 @@ c_entry(int argc, char **argv, char *extraspace,
 	unsigned long maxextrabytes)
 {
   // we extend the stack so that we can modify envp as needed
-  int   debug=0;
   char **envp;
   char *orig_interp=NULL, *exec=NULL, *ldlibpath=NULL;
   char *script_path       = TOSTRING(KLDD_SH_PATH);
@@ -968,7 +976,7 @@ c_entry(int argc, char **argv, char *extraspace,
     sys_write(2, "\n", 1);
   }
 
-  if (run_kldso_sh(script_path, argc, argv, envp, debug,
+  if (run_kldso_sh(script_path, argc, argv, envp,
 		   stdoutbuf, sizeof(stdoutbuf), &n)<0) {
     die_msg("[KLD.SO]: run_kldso_sh failed");
   }
@@ -979,6 +987,7 @@ c_entry(int argc, char **argv, char *extraspace,
   }
 
   ldlibpathlen = (ldlibpath) ? my_strlen(ldlibpath) : 0;
+
   // see if we need to insert LD_LIBRARY_PATH into the envp
   if (ldlibpathlen) {
     long extrabytes =
@@ -1028,7 +1037,7 @@ c_entry(int argc, char **argv, char *extraspace,
     my_memcpy(newstrings + (sizeof("LD_LIBRARY_PATH=")-1), ldlibpath, 
 	      ldlibpathlen);
     newstrings[(sizeof("LD_LIBRARY_PATH=")-1) + ldlibpathlen] = '\0';
-
+     
     // if there was an old LD_LIBRARY_PATH, poison key in place
     char *oldldlibvar = get_env_value(&newenvp[1],
 				      "LD_LIBRARY_PATH");
@@ -1041,12 +1050,12 @@ c_entry(int argc, char **argv, char *extraspace,
     // update where kld_initial_rsp with the new frame start
     kld_initial_rsp = newframestart;
   }
-
   
   unsigned long interp_base = 0, interp_entry = 0;
   if (map_interp_elf(orig_interp, &interp_base, &interp_entry, debug) < 0) {
     die_msg("[KLD.SO]: map_interp_elf failed");
   }
+
   if (patch_auxv_at_base(kld_initial_rsp, interp_base) < 0) {
     die_msg("[KLD.SO]: AT_BASE not found in auxv");
   }
@@ -1066,13 +1075,19 @@ c_entry(int argc, char **argv, char *extraspace,
     sys_write(2, "\n", 1);
   }
   
-  if (init_gdb_rendezvous(kld_initial_rsp, argv, orig_interp, interp_base, debug) < 0) {
-    die_msg("[KLD.SO]: failed to initialize GDB rendezvous");
+  if (init_gdb_rendezvous(kld_initial_rsp, argv,
+              orig_interp, interp_base, debug) < 0) {
+    if (debug) {
+      sys_write(2, "[KLD.SO]: WARNING: GDB rendezvous init failed; continuing\n", 
+        58);
+    }
   }
   
   if (debug) {
     sys_write(2, "[KLD.SO]: GDB rendezvous initialized successfully\n", 50);
   }
+
+  
   handoff_to_interp(kld_initial_rsp, interp_entry);
   
   sys_exit(1);

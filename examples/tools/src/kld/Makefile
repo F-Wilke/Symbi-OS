@@ -4,7 +4,8 @@ O          := 0
 CFLAGS     += -g -O${O} -std=gnu99 -MD -MP -Wall -Werror $(shell pkg-config fuse3 --cflags) 
 KLDSO_SH_PATH ?= $(realpath .)/kldso.sh
 KLDSO_PATH ?= $(realpath .)/kld.so
-KLDSO_CFLAGS := -O2 -g -DKLDD_SH_PATH=$(KLDSO_SH_PATH) -fno-builtin -fno-stack-protector -nostdlib -MD
+KLDSO_CFLAGS := -O2 -g -DKLDD_SH_PATH=$(KLDSO_SH_PATH) -fno-builtin -fno-stack-protector -nostdlib -MD -fPIE
+KLDSO_LDFLAGS := -nostdlib -pie -Wl,-e,_start
 TARGETS    := kld.so kld kldd readsymtbl listlibs stubstest kerntest
 UTHASHREPO := git@github.com:troydhanson/uthash.git
 UTHASHDIR  := ext/uthash
@@ -25,7 +26,7 @@ kld: kld.so ${KLD_OBJS}
 	${CC} ${CFLAGS} -o $@ ${KLD_OBJS} ${LDFLAGS} 
 
 kld.so: kldso_entry.o kldso.o
-	${LD} -g -o $@ $^
+	${CC} ${KLDSO_LDFLAGS} -o $@ $^
 
 kldso_entry.o: kldso_entry.S
 	${AS} -g -o $@ $<
