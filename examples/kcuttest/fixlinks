@@ -1,27 +1,20 @@
 #!/bin/bash
+#set -x
 
-find . -type l | while read file; do
+find $PWD -type l | while read file; do
+    sdir=${file%/*}
     target=$(readlink $file)
-    base=${file##*/}
-    dir=${target%/*}
+    tbase=${target##*/}
+    tdir=${target%/*}
     fix=''
+    
     [[ ! -a $target ]] && {
 	echo -n "broken: $base->$target"
-	if [[ -a ../$base ]]; then 
-	    fix="../$base"
-	else
-	    type=${base##*.}
-	    src=${base%.*}
-	    [[ $type == 'c' || $type == 'h' || $type == 'S' ]] && {
-		[[ -a ../${src}.k${type} ]] && {
-  		   fix="../${src}.k${type}" 
-		}
-	    }
+	if [[ -a $sdir/../$tbase ]]; then 
+	    fix=$(realpath $sdir/../$tbase)
+	    echo -n " fix: ln -sf $fix $file"
+	    ln -sf $fix $file
 	fi
-	[[ -n $fix ]] && {
-	    echo -n " fix:->$fix"
-	    rm $base
-	}
 	echo
     }
 done

@@ -155,24 +155,81 @@ istefrsp $ist0 4
 end
 
 define modsetup
-  p modules
-  set $modoff=(char *)&((struct module *)0)->list
-  set $modptr=(struct module *)((char *)modules.next-$modoff)
-  p $modoff 
-  p $modptr
-  p $modptr->name
-  set $modtext=$modptr->mem[0].base
-  set $moddata=$modptr->mem[1].base
-  set $modroata=$modptr->mem[2].base
-  dir ../examples/kcuttest
-  dir ../examples/kcuttest/.ext
-  add-symbol-file ../examples/kcuttest/.ext/idt_adaptor.ko $modtext -s .data $moddata
+  #
+  # Walk the kernel module list for the named module and load its symbols.
+  # Usage:   modsetup <module_name> <source_dir>
+  # Example: modsetup idt_adaptor ../examples/kcuttest
+  #
+  # The .ko is expected at: <source_dir>/<module_name>.ko
+  #
+
+  # Byte offset of the 'list' field inside struct module
+  set $modoff   = (unsigned long)&((struct module *)0)->list
+
+  # Circular list sentinal (the global 'modules' list_head itself)
+  set $listhead = (struct list_head *)&modules
+  set $listptr  = modules.next
+  set $found    = 0
+
+  # Walk until we wrap back to the list head
+  while $listptr != $listhead
+    set $modptr = (struct module *)((char *)$listptr - $modoff)
+    if $_streq($modptr->name, "$arg0")
+      set $found = 1
+      loop_break
+    end
+    set $listptr = $listptr->next
+  end
+
+  if $found
+    printf "Found module: %s\n", $modptr->name
+    set $modtext   = $modptr->mem[0].base
+    set $moddata   = $modptr->mem[1].base
+    set $modrodata = $modptr->mem[2].base
+    dir $arg1
+    dir $arg1/.ext
+    add-symbol-file $arg1/$arg0.ko $modtext -s .data $moddata
+  else
+    printf "Module '%s' is not loaded.\n", "$arg0"
+  end
+end
+document modsetup
+  Load debug symbols for a kernel module found by name in the module list.
+
+  Usage:
+    modsetup <module_name> <source_dir>
+
+  Arguments:
+    module_name  Name exactly as it appears in /proc/modules (e.g. idt_adaptor)
+    source_dir   Path to the module build tree    (e.g. ../examples/kcuttest)
+
+  The command walks the kernel 'modules' linked list, finds the entry whose
+  name matches module_name, and calls add-symbol-file with the text/data
+  base addresses extracted from module->mem[].
+
+  The .ko file is assumed to live at:  <source_dir>/.ext/<module_name>.ko
+end
+
+define kcutmodsetup
+       modsetup kcuttest ../examples/kcuttest
+       modsetup kcutevac ../examples/kcutevac
+       modsetup kcuttcp  ../examples/kcuttcp
+       modsetup kcutnmi  ../examples/kcutnmi
+       modsetup kcutef   ../examples/kcutef	
+       modsetup kcutidt  ../examples/kcutidt
 end
 
 define setup
+   printf "SETUP: Make sure that you are in your Symbi-OS linux directory and you are debugging vmlinux\n"
+   printf "       Be sure:\n"
+   printf "          1) gdbinit: autoload full path to linux/scripts/gdb/vmdlinux-gdb.py"
+   printf "          2) gdbinit: ensure substitute-path is set as needed: eg. /home/user /home/jappavoo"
+   printf "          3) fixlinks: be sure any full path linux to source are fixed locally (see fixlinks)"
+  
    set print pretty
    set radix 10
    target remote :4242
-   hb native_load_idt
-   hb ef_stack_badword_error
+   lx-symbols ../examples
+#   hb native_load_idt
+#   hb ef_stack_badword_error
 end
