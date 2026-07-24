@@ -24,6 +24,8 @@
         .equ USER_CS, 0x33
 	.equ USER_SS, 0x2b
 
+	.equ SMEP_SMAP_MASK, 0x300000
+
 	.equ CS_MASK, ~0xff
 	.equ SS_MASK, ~0xff
 	.equ FLAGS_MASK, 0xffffffff00000000
@@ -103,6 +105,15 @@ ef_adaptor_asm_fix_ist_err_code:
 
 	jz  .Lerr_c_skip_flag_set
 
+	//check cr4 whether smep/smap has been enabled
+	movq %cr4, %rcx
+	testl $SMEP_SMAP_MASK, %ecx
+	jz .Lerr_c_skip_cr4_set
+	//if smep/smap is enabled, we need to disable it
+	andl $~SMEP_SMAP_MASK, %ecx
+	movq %rcx, %cr4
+
+.Lerr_c_skip_cr4_set:
 	movq %cr2, %rcx
 	testq %rcx, %rcx
 	js .Lerr_c_skip_flag_set 
