@@ -95,23 +95,39 @@ static bool is_ancestor(struct task_struct *task)
   return false;
 }
 
-
+static bool has_perf_events(struct task_struct *task)
+{
+  // perf_event_ctxp is only set for task-attached events (NOT cpu-wide / -a mode)
+  // perf_event_list tracks ALL events owned by this task, including cpu-wide
+  return !list_empty(&task->perf_event_list);
+}
 
 // Check if process should be preserved
 static bool should_preserve_migrate(struct task_struct *task)
 {
   // Always preserve init
-  if (task->pid == 1)
-  return true;
+  if (task->pid == 1) return true;
   
   // Preserve kernel threads
-  if (task->flags & PF_KTHREAD)
-  return true;
+  if (task->flags & PF_KTHREAD) return true;
   
   // Preserve current process
-  if (task == current)
-  return true;
+  if (task == current) return true;
   
+  // Preserve tasks with active perf events contexts 
+  if (has_perf_events(task)) {
+    pr_info("EVAC: Preserving task %d (%s) -- has active perf events\n",
+	    task->pid, task->comm);
+    return true;    
+  }
+
+  // fall back in case above misses perf 
+  if (strncmp(task->comm, "perf", 4) == 0) {
+    pr_info("EVAC: Preserving task %d (%s) -- found 'perf' \n",
+	    task->pid, task->comm);
+    return true;    
+  }
+
   return false;
 }
 
