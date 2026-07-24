@@ -24,7 +24,7 @@
         .equ USER_CS, 0x33
 	.equ USER_SS, 0x2b
 
-	.equ SMEP_SMAP_MASK, 0x300000
+	.equ SMEP_SMAP_MASK, ((1<<21) | (1<<20))
 
 	.equ CS_MASK, ~0xff
 	.equ SS_MASK, ~0xff
@@ -113,6 +113,24 @@ ef_adaptor_asm_fix_ist_err_code:
 	andl $~SMEP_SMAP_MASK, %ecx
 	movq %rcx, %cr4
 
+	// now test if this fault was due to a protection violation
+	bt   $(ERRCODE_PF_PROT) , 0x20(%rsp)
+	jnc  .Lerr_c_skip_cr4_set
+
+	// return back to the faulting operation
+	// cleanup the stack and iret
+	//  two words need to be clear from the stack
+	//     1. the handler pushed on by the ef entry code
+	//     2. the error code pushed by the hardware
+	popq %rcx
+	popq %rsi
+	popq %rdi
+	addq $(8*2), %rsp //remove return address from stack and error code
+	
+	// now we can iret now return using what is left of
+	// the exception fram RIP, CS, RFLAGS, RSP, SS
+	iretq
+	
 .Lerr_c_skip_cr4_set:
 	movq %cr2, %rcx
 	testq %rcx, %rcx
