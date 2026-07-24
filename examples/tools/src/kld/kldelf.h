@@ -71,6 +71,7 @@ kld_sym_init_from_kallsyms(kld_sym *this, uintptr_t addr, char *name,
   case 'u': 
   case 'v': 
   case 'w':
+  case '?':    
     rc = -1; break;
 #endif    
   default:
