@@ -1,13 +1,5 @@
 #set -x
-LIBK=${LIBK:-/proc/libkallsyms.so}
-[[ -z $LLIBK ]] && LLIBK=${LIBK##*/}
-
-typeset -i RMMOD=${RMMOD:-0}
 typeset -i BGWRK=${BGWRK:-0}
-
-(( RMMOD )) && {
-    [[ -a /sys/module/ext ]] && sudo rmmod ext
-}
 
 (( BGWRK > 0)) && {
     bgpids=()
@@ -15,19 +7,11 @@ typeset -i BGWRK=${BGWRK:-0}
 	{
 	    ((i=0)); while true; do ((i++)); sleep 1; cat /etc/passwd > /tmp/bgwrk.$i.out; done;
 	} &
-	bgpids+=$!
+	bgpids+=($!)
     done
 }
-(( BGWRK )) && echo "STARTED BACKGROUND BUSY LOOPS: ${bgpids[*]}"
+(( BGWRK )) && echo "STARTED BACKGROUND BUSY LOOPS: ${bgpids[@]}"
 
-LIBK=/proc/libkallsyms.so
-#[[  $LIBK -nt $LLIBK ]] && {
-#   cp $LIBK $LLIBK
-#    make clean; make
-#}
-
-LD_LIBRARY_PATH=~/Symbi-OS/Symlib/dynam_build:$PWD
-echo $LD_LIBRARY_PATH
 
 #sudo LD_DEBUG=all LD_BIND_NOW=1 LD_LIBRARY_PATH=$LD_LIBRARY_PATH ./main
 
@@ -38,6 +22,11 @@ echo $LD_LIBRARY_PATH
 
 #sudo kill -SIGUSR1 1
 [[ -n $GDB ]] && GDB="$GDB -args"
-sync; sync; sync; sudo LD_LIBRARY_PATH=$LD_LIBRARY_PATH $GDB ./main $@
+sync; sync; sync; sudo  $GDB ./kcuttest $@
+for p in "${bgpids[@]}"; do
+    echo "killing bgwrk: $p"
+    kill -9 $p
+done
+wait
 #sudo systemctl default
 
