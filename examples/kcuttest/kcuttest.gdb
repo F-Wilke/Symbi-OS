@@ -229,7 +229,7 @@ define setup
    set print pretty
    set radix 10
    target remote :4242
-   lx-symbols ../examples
+#   lx-symbols ../examples
 #   hb native_load_idt
 #   hb ef_stack_badword_error
 end
