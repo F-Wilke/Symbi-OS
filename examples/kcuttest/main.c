@@ -134,25 +134,27 @@ extern int _printk(const char *fmt, ...);
 
 int main(int argc, char **argv) {
   pid_t mypid = getpid();
-  int ssec = 1;
-  volatile signed long bloop=1000000000;
-  signed long yieldcnt=10;
+  int ssec = 0;
+  volatile signed long bloop=0;
+  signed long yieldcnt=0;
   int evac=0;
+  int wait_for_stdin = 0;
   volatile void * _printk_ptr;
-  unsigned num_forks = 1000, num_spawns = 1000, num_increments = 1000;
-  unsigned stack_df = 1;
+  unsigned num_forks = 0, num_spawns = 0, num_increments = 0;
+  unsigned stack_df = 0;
   unsigned do_test_interrupt = 0;
   
   _printk_ptr = (void *)_printk;
-  if (argc > 1) ssec     = atoi(argv[1]);
-  if (argc > 2) bloop    = atol(argv[2]);
-  if (argc > 3) yieldcnt = atol(argv[3]);
-  if (argc > 4) evac     = atoi(argv[4]);
-  if (argc > 5) num_forks = atoi(argv[5]);
-  if (argc > 6) num_spawns = atoi(argv[6]);
-  if (argc > 7) num_increments = atoi(argv[7]);
-  if (argc > 8) stack_df = atoi(argv[8]);
-  if (argc > 9) do_test_interrupt = atoi(argv[9]);
+  if (argc > 1) ssec               = atoi(argv[1]);
+  if (argc > 2) bloop              = atol(argv[2]);
+  if (argc > 3) yieldcnt           = atol(argv[3]);
+  if (argc > 4) evac               = atoi(argv[4]);
+  if (argc > 5) wait_for_stdin     = atoi(argv[5]);
+  if (argc > 6) num_forks          = atoi(argv[6]);
+  if (argc > 7) num_spawns         = atoi(argv[7]);
+  if (argc > 8) num_increments     = atoi(argv[8]);
+  if (argc > 9) stack_df           = atoi(argv[9]);
+  if (argc > 10) do_test_interrupt = atoi(argv[10]);
   
   printf("%d: BASIC KCUT TESTS: BEGIN: ssec=%d bloop=%lu yieldcnt=%lu\n", mypid, ssec, bloop, yieldcnt);
 
@@ -168,15 +170,23 @@ int main(int argc, char **argv) {
 
   unsigned long cr3=0xdeadbeefdeadbeef;
   
-  if (evac) kcut_evacuate(1);
+  if (evac) {
+    printf("\t%d: BEFORE EVACUATE\n", mypid);
+    kcut_evacuate(1);
+    printf("\t%d: AFTER EVACUATE\n", mypid);
+  }
   
+  if (wait_for_stdin) {
+    printf("\n%d: Press enter to continue\n", mypid);
+    (void)getchar();
+  }
   sym_elevate();
   
   printf("\t\t%d: %lx: PRIVILEGED INSTRUCTION TEST: START\n", mypid, cr3);
   __asm__ __volatile__("movq %%cr3,%0" : "=r"( cr3 ));
 
   printf("\t\t%d: %lx: PRIVILEGED INSTRUCTION TEST: END: CR3: %lx\n", mypid, cr3, cr3);
-
+  
   printf("\t\t%d: %lx: STACK TOUCH TEST: START\n", mypid, cr3);
   int ss = stacktouch();
   printf("\t\t%d: %lx: STACK TOUCH TEST: END: ss=%d\n", mypid, cr3, ss);
@@ -318,7 +328,7 @@ int main(int argc, char **argv) {
   printf("\t\t%d: %lx: kcuttcp reference: BEGIN\n", mypid, cr3);
   printf("kcut_tcp_recvmsg: %p\n", (void *)&kcut_tcp_recvmsg);
   printf("\t\t%d: %lx: kcuttcp reference: end\n", mypid, cr3);
-  
+
   symbi_fast_lower();
 
   if (evac) kcut_evacuate(0);
