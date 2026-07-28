@@ -103,7 +103,7 @@ ef_adaptor_asm_fix_ist_err_code:
 
 	testb $1, TASK_symbiote_elevated(%rsi)
 
-	jz  .Lerr_c_skip_flag_set
+	jz  .Lerr_c_skip_forgery
 
 	//check cr4 whether smep/smap has been enabled
 	movq %cr4, %rcx
@@ -125,7 +125,7 @@ ef_adaptor_asm_fix_ist_err_code:
 	popq %rcx
 	popq %rsi
 	popq %rdi
-	addq $(8*2), %rsp //remove return address from stack and error code
+	addq $(8*2), %rsp                 //remove return address from stack and error code
 	
 	// now we can iret now return using what is left of
 	// the exception fram RIP, CS, RFLAGS, RSP, SS
@@ -134,14 +134,27 @@ ef_adaptor_asm_fix_ist_err_code:
 .Lerr_c_skip_cr4_set:
 	movq %cr2, %rcx
 	testq %rcx, %rcx
-	js .Lerr_c_skip_flag_set 
-	//if cr2 is negative, it's a kernel address, so we want to give the appearance that we faulted in the kernel.
-	orl   $(ERRCODE_PF_USER) , 0x20(%rsp)
+	js .Lerr_c_skip_forgery            //cr2 negative -> kernel address, don't forge
 
-	movq   $(USER_CS) , 0x30(%rsp)
-	movq   $(USER_SS) , 0x48(%rsp)
+        // At this point we know current is an elevated process
+	// Only forge when the fault originated from the elevated task's own
+	// user code (positive faulting RIP).  If a kernel function caused 
+	// this fault (negative RIP — e.g. NMI/IRQ handler or a kernel function
+	// doing get_user/copy_from_user), skip forgery so the exception-table
+	// fixup path can return -EFAULT to the caller instead.  This is critical to allow
+	// pagefault logic to see that it was the kernel attempting to access user addresses
+	// and its logic for handling special case exceptions should be correcly dealt with
+	movq 0x28(%rsp), %rcx		//faulting RIP from exception frame
+	testq %rcx, %rcx
+	js .Lerr_c_skip_forgery    	//rip negative -> kernel code caused fault, don't forge
 
-.Lerr_c_skip_flag_set:
+	// The Forgery -- convert kernel mode access to lookl like a user mode access
+	//                Affects pagefault handling logic 
+	orl   $(ERRCODE_PF_USER) , 0x20(%rsp)	// make error code look like user
+	movq   $(USER_CS) , 0x30(%rsp)          // make CS look like user cs
+	movq   $(USER_SS) , 0x48(%rsp)          // make SS look like user ss
+
+.Lerr_c_skip_forgery:
 .Lerr_c_copy_frame_to_dest:
 
 	subq $0x50, %rdi //point to start of exception frame on IST stack
