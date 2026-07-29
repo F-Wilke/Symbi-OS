@@ -4,19 +4,29 @@
 #include <asm/nospec-branch.h>
 #include <asm/thread_info.h>
 
-#define TSS_IST7    84
-
+	#define TSS_IST7    84
 	// HW ERROR CODE is last item pushed on to stack by exception logic
 	// bits are defined as follows for pagefault exception-- from intel manual
-	.equ ERRCODE_PF_PROT,  1<<0
-	.equ ERRCODE_PF_WRITE, 1<<1
-	.equ ERRCODE_PF_USER,  1<<2
-	.equ ERRCODE_PF_RSVD,  1<<3
-	.equ ERRCODE_PF_INSTR, 1<<4	
-	.equ ERRCODE_PF_PK,    1<<5
-	.equ ERRCODE_PF_SHSTK, 1<<6
-	.equ ERRCODE_PF_HLAT,  1<<7
-	.equ ERRCODE_PF_SGX,   1<<15
+	.equ ERRCODE_PF_PROT_BIT,  0
+	.equ ERRCODE_PF_WRITE_BIT, 1
+	.equ ERRCODE_PF_USER_BIT,  2
+	.equ ERRCODE_PF_RSVD_BIT,  3
+	.equ ERRCODE_PF_INSTR_BIT, 4	
+	.equ ERRCODE_PF_PK_BIT,    5
+	.equ ERRCODE_PF_SHSTK_BIT, 6
+	.equ ERRCODE_PF_HLAT_BIT,  7
+	.equ ERRCODE_PF_SGX_BIT,   15
+
+	// NOTE: TEST ARE MASK VERSIONS
+	.equ ERRCODE_PF_PROT_MASK,  1<<ERRCODE_PF_PROT_BIT
+	.equ ERRCODE_PF_WRITE_MASK, 1<<ERRCODE_PF_WRITE_BIT
+	.equ ERRCODE_PF_USER_MASK,  1<<ERRCODE_PF_USER_BIT
+	.equ ERRCODE_PF_RSVD_MASK,  1<<ERRCODE_PF_RSVD_BIT
+	.equ ERRCODE_PF_INSTR_MASK, 1<<ERRCODE_PF_INSTR_BIT
+	.equ ERRCODE_PF_PK_MASK,    1<<ERRCODE_PF_PK_BIT
+	.equ ERRCODE_PF_SHSTK_MASK, 1<<ERRCODE_PF_SHSTK_BIT
+	.equ ERRCODE_PF_HLAT_MASK,  1<<ERRCODE_PF_HLAT_BIT
+	.equ ERRCODE_PF_SGX_MASK,   1<<ERRCODE_PF_SGX_BIT
 	
 	.equ RFLAGS_SWAPPED_GS, 1<<29
 	.equ RFLAGS_SWAPPED_GS_MASK, ~(1<<29)
@@ -24,8 +34,10 @@
         .equ USER_CS, 0x33
 	.equ USER_SS, 0x2b
 
+#if 0	
 	.equ SMEP_SMAP_MASK, ((1<<21) | (1<<20))
-
+#endif
+	
 	.equ CS_MASK, ~0xff
 	.equ SS_MASK, ~0xff
 	.equ FLAGS_MASK, 0xffffffff00000000
@@ -78,17 +90,22 @@ ef_adaptor_asm_fix_ist_err_code:
 	
 	//is cr2 on the page below our kernel stack (in rsi)?
 	subq $(THREAD_SIZE + 0x1000), %rsi
+	addq $~0xfff, %rsi        // page align to be robust to  tss_sp0 is not being aligned
 	movq %cr2, %rcx
-	andw $0xf000, %cx
-	testq %rcx, %rsi
-	jns .Lerr_c_skip_set_dest //we are on some other page so no df
-
+	andq $~0xfff, %rcx
+	// testq %rcx, %rsi       // this is wrong does (testq does bitwise and) any kernel address will always
+	                          // have but 63 on and we will always direct to double fault
+	// jns .Lerr_c_skip_set_dest //we are on some other page so no df
+	// to ensure all works when kernel address are faulted on we switch to 
+        cmpq %rcx, %rsi
+	jne  .Lerr_c_skip_set_dest //we are on some other page so no df
 .Lerr_c_do_double_fault:
 	//here we'll jump to the DF handler
 	popq %rcx
 	popq %rsi
 	popq %rdi
 	addq $8, %rsp //remove return address from stack
+        ANNOTATE_RETPOLINE_SAFE 
 	jmp   *df_handler_location
 	int3
 
@@ -105,16 +122,17 @@ ef_adaptor_asm_fix_ist_err_code:
 
 	jz  .Lerr_c_skip_forgery
 
+#if 0	
 	//check cr4 whether smep/smap has been enabled
 	movq %cr4, %rcx
 	testl $SMEP_SMAP_MASK, %ecx
 	jz .Lerr_c_skip_cr4_set
 	//if smep/smap is enabled, we need to disable it
-	andl $~SMEP_SMAP_MASK, %ecx
+	andq $~SMEP_SMAP_MASK, %rcx       // must use andq to avoid zero extending! use andq to perserve upper 32 bits or cr4
 	movq %rcx, %cr4
 
 	// now test if this fault was due to a protection violation
-	bt   $(ERRCODE_PF_PROT) , 0x20(%rsp)
+	btq  $(ERRCODE_PF_PROT_BIT) , 0x20(%rsp)
 	jnc  .Lerr_c_skip_cr4_set
 
 	// return back to the faulting operation
@@ -130,6 +148,7 @@ ef_adaptor_asm_fix_ist_err_code:
 	// now we can iret now return using what is left of
 	// the exception fram RIP, CS, RFLAGS, RSP, SS
 	iretq
+#endif
 	
 .Lerr_c_skip_cr4_set:
 	movq %cr2, %rcx
@@ -150,7 +169,7 @@ ef_adaptor_asm_fix_ist_err_code:
 
 	// The Forgery -- convert kernel mode access to lookl like a user mode access
 	//                Affects pagefault handling logic 
-	orl   $(ERRCODE_PF_USER) , 0x20(%rsp)	// make error code look like user
+	orl   $(ERRCODE_PF_USER_MASK) , 0x20(%rsp)	// make error code look like user
 	movq   $(USER_CS) , 0x30(%rsp)          // make CS look like user cs
 	movq   $(USER_SS) , 0x48(%rsp)          // make SS look like user ss
 
@@ -188,14 +207,17 @@ ef_adaptor_asm_fix_ist_err_code:
 	testl $CS_MASK, 0x18(%rsp)
 	jnz .Lerr_c_ret_state_bad
 
-	testl $FLAGS_MASK, 0x20(%rsp)
+	// testl $FLAGS_MASK, 0x20(%rsp)  
+	cmpl $0, (0x20 + 4)(%rsp)      // can't use the above as x86 64 can not encode a 64 bit constant with test (l or q)
+	                               // instead we explicit compare the upper 4 bytes (little endian address + 4)
+	                               // cmp 0 to the value
 	jnz .Lerr_c_ret_state_bad
 
 	testl $SS_MASK, 0x30(%rsp)
 	jnz .Lerr_c_ret_state_bad
 
 .Lerr_c_ret_normal:
-	retq
+	RET    // use RET macro to be compliant with linux ret security mitigations
 	// int3 to satifiy objtool desire for a trap after a speculative jump to try and improve security
 	int3
 
@@ -221,7 +243,6 @@ ef_adaptor_asm_fix_ist_no_err_code:
 
 	pushq %rdi
 
-	xorq %rdi, %rdi
 	movq %rsp, %rdi
 	andq $0xfff, %rdi //mask to get the offset within the page of the faulting stack pointer. If this is small, then we likely faulted on a user stack. If it's large, then we likely faulted on a kernel stack. This is not a perfect check but should work in practice since user stacks are usually near the bottom of the user address space and kernel stacks are near the top of the kernel address space.
 	cmpq $0xfc8, %rdi //compare against a threshold near the top of the page
@@ -279,13 +300,17 @@ ef_adaptor_asm_fix_ist_no_err_code:
 	testl $CS_MASK, 0x10(%rsp)
 	jnz .Lerr_c_ret_state_bad
 
-	testl $FLAGS_MASK, 0x18(%rsp)
+	// testl $FLAGS_MASK, 0x18(%rsp)
+	cmpl $0, (0x18 + 4)(%rsp)      // can't use the above as x86 64 can not encode a 64 bit constant with test (l or q)
+	                               // instead we explicit compare the upper 4 bytes (little endian address + 4)
+	                               // cmp 0 to the value
+
 	jnz .Lerr_c_ret_state_bad
 
 	testl $SS_MASK, 0x28(%rsp)
 	jnz .Lerr_c_ret_state_bad
 
-	retq
+	RET    // use RET macro to be compliant with linux ret security mitigations
 	// int3 to satifiy objtool desire for a trap after a speculative jump to try and improve security
 	int3
 
@@ -316,7 +341,7 @@ ef_isr_tgt_x:
 	.align 16
 	.global ef_common_hdlr
 ef_common_hdlr:
-	retq
+	RET    // use RET macro to be compliant with linux ret security mitigations
 	int3
 	
 	// switched to using a table to avoid code patching
@@ -341,7 +366,7 @@ ohshit_##i:  jz    ohshit_##i           ;      \
 	.align 16
 	.global ef_common_hdlr
 ef_common_hdlr:
-	retq
+	RET    // use RET macro to be compliant with linux ret security mitigations
 	int3
 	
 	// switched to using a table to avoid code patching
