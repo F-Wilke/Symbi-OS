@@ -15,6 +15,7 @@
 #include <asm/irq_vectors.h>
 #include <asm/desc.h>
 #include <asm/idtentry.h>
+#include <asm/ibt.h>
 
 #include "idtadaptor.h"
 #include "nmiadaptor.h"
@@ -124,6 +125,7 @@ static __attribute__((used)) void ef_adaptor_tsthdlr(unsigned long *rsp)
 asm(
 "   .global ef_adaptor_tsthdlr_asm\n"
 "ef_adaptor_tsthdlr_asm:\n"
+"   " ASM_ENDBR
 "   cld\n"
 "   swapgs\n"
 "   pushq %rdi\n"

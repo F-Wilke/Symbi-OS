@@ -40,6 +40,7 @@ nmi_asm_check_ist7:
 
 nmi_asm_check_ist7_exit_now:
     pop %rdi
+    ANNOTATE_RETPOLINE_SAFE 
     jmp *nmi_adaptor_asm_exc_nmi
     int3
 
@@ -68,6 +69,7 @@ nmi_asm_check_ist7_user_gs:
 nmi_asm_check_ist7_user_exit_now:
     swapgs
     pop %rdi
+    ANNOTATE_RETPOLINE_SAFE	
     jmp *nmi_adaptor_asm_exc_nmi
     int3
 
@@ -107,7 +109,8 @@ nmi_asm_ret_stub:
 
     add $0x28, %rsp
     pop %rbx
-    ret
+
+    RET
     int3
 
 #endif
