@@ -37,15 +37,14 @@ static inline unsigned long get_exc_page_fault_addr()
 #endif
   return val;
 }
+const int PGSIZE=4096;
 
-int stacktouch(void)
+int stacktouch(volatile char *stackspace, int len, int stride)
 {
-  const int PGSIZE=4096;
-  const int n=PGSIZE * 8;
-  volatile char data[n];
+  volatile char *data = stackspace;
   int sum = 0;
 
-  for (int i=0; i<n; i+=4096) { data[i]=0xff; sum += data[i]; }  
+  for (int i=0; i<len; i+=stride) { data[i]=0xff; sum += data[i]; }  
   
   return sum;
 }
@@ -143,6 +142,9 @@ int main(int argc, char **argv) {
   unsigned num_forks = 0, num_spawns = 0, num_increments = 0;
   unsigned stack_df = 0;
   unsigned do_test_interrupt = 0;
+  int ss;
+  volatile char stackspace1[4*PGSIZE];
+  volatile char stackspace2[4*PGSIZE];
   
   _printk_ptr = (void *)_printk;
   if (argc > 1) ssec               = atoi(argv[1]);
@@ -186,14 +188,14 @@ int main(int argc, char **argv) {
   __asm__ __volatile__("movq %%cr3,%0" : "=r"( cr3 ));
 
   printf("\t\t%d: %lx: PRIVILEGED INSTRUCTION TEST: END: CR3: %lx\n", mypid, cr3, cr3);
-  
+
   printf("\t\t%d: %lx: STACK TOUCH TEST: START\n", mypid, cr3);
-  int ss = stacktouch();
+  ss = stacktouch(stackspace1, sizeof(stackspace1), PGSIZE);
   printf("\t\t%d: %lx: STACK TOUCH TEST: END: ss=%d\n", mypid, cr3, ss);
 
 
   printf("\t\t%d: %lx: IN-KERNEL STACK TOUCH TEST: START\n", mypid, cr3);
-  ss = greeter_k_stacktouch();
+  ss = greeter_k_stacktouch(stackspace2, sizeof(stackspace2), PGSIZE);
   printf("\t\t%d: %lx: IN-KERNEL STACK TOUCH TEST: END: ss=%d\n", mypid, cr3, ss);
 
   printf("\t\t%d: %lx: READ NATIVE KERNEL SYMBOL TEST: START\n", mypid, cr3);
