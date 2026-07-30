@@ -72,7 +72,7 @@ address.
 mode address with a translation for which the XD flag (bit 63) is 0 in every paging-structure entry
 controlling the translation; instructions may not be fetched from any supervisor-mode address with a
 translation for which the XD flag is 1 in any paging-structure entry controlling the translation.
-— Instruction fetches from user-mode addresses.
+61;8203;1c— Instruction fetches from user-mode addresses.
 Access rights depend on the values of CR4.SMEP:
 • If CR4.SMEP = 0, access rights depend on the paging mode and the value of IA32_EFER.NXE:
 — For 32-bit paging or if IA32_EFER.NXE = 0, instructions may be fetched from any user-mode
@@ -87,8 +87,8 @@ translation for which the XD flag is 1 in any paging-structure entry controlling
 
 
 
-If CR4.SMEP(?) == 1 && EC.U/S(2)== 0 && EC.I/D(4) == 1 && EC.P(0) == 1 then we have possibly had an SMEP protection failure unset CR4.SMEP and restart access
-If CR4.SMAP(?) == 1 && EC.U/S(2)== 0 && EC.I/D(4) == 0 && EC.P(0) == 1 then we have possibly had an SMAP protection failure unset CR4.SMEP and restart access
+If CR4.SMEP(20) == 1 && EC.U/S(2)== 0 && EC.I/D(4) == 1 && EC.P(0) == 1 then we have possibly had an SMEP protection failure unset CR4.SMEP and restart access
+If CR4.SMAP(21) == 1 && EC.U/S(2)== 0 && EC.I/D(4) == 0 && EC.P(0) == 1 then we have possibly had an SMAP protection failure unset CR4.SMEP and restart access
 
 Once elevated then 
 P  (0) == 1
@@ -97,7 +97,7 @@ SMEP_SMAP_POSSIBLE_FAULT_EC_MASK ( 1<<0 | 1<<2 )
 SMEP_SMAP_POSSIBLE_FAULT_EC_VAL ( 1<<0 | 0<<2 ) 
 
 if (EC & SMEP_SMAP_POSSIBLE_FAULT_EC_MASK) == SMEP_SMAP_POSSIBLE_FAULT_EC_VAL) {
-   CR4.SMEP = 0; CR4.SMAP =0;
+   CR4.SMEP(20) = 0; CR4.SMAP(21) =0;
    return from interrupt
    }
 
