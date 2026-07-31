@@ -39,9 +39,8 @@ static inline unsigned long get_exc_page_fault_addr()
 }
 const int PGSIZE=4096;
 
-int stacktouch(volatile char *stackspace, int len, int stride)
+int stacktouch(volatile char *data, int len, int stride)
 {
-  volatile char *data = stackspace;
   int sum = 0;
 
   for (int i=0; i<len; i+=stride) { data[i]=0xff; sum += data[i]; }  
