@@ -151,6 +151,16 @@ ef_adaptor_asm_fix_ist_err_code:
 #endif
 	
 .Lerr_c_skip_cr4_set:
+	// if elevated task has enable_ac=1 but a kernel CLAC cleared it before
+	// this fault, restore AC=1 in the saved EFLAGS so fault.c's software
+	// enforce SMAP semantics are not triggred.
+	testb $1, TASK_symbiote_enable_ac(%rsi)
+	jz   .Lerr_c_ac_done
+	// invariant: elevated task with symbiote_enable_ac=1 must have AC=1
+	// in saved EFLAGS so unconditionaly restore it 
+	orl   $X86_EFLAGS_AC, 0x38(%rsp)
+
+.Lerr_c_ac_done:		
 	movq %cr2, %rcx
 	testq %rcx, %rcx
 	js .Lerr_c_skip_forgery            //cr2 negative -> kernel address, don't forge
