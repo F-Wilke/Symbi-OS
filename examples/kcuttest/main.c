@@ -99,12 +99,13 @@ typedef struct {
 
 void *threadfn(void *arg)
 {
+  volatile char stkspace[2*PGSIZE];
   thread_arg_t* argptr = arg;
   int mypid = current_pid();
   if (argptr->arg % 100 == 0) {
     printf("\t\t\tthreadfn: in thread with arg=%u pid=%d\n", argptr->arg, mypid);
   }
-  stacktouch();
+  stacktouch(stkspace, sizeof(stkspace), PGSIZE);
 
 
   pthread_barrier_wait(&barrier);
@@ -263,7 +264,7 @@ int main(int argc, char **argv) {
       if (i % 100 == 0) printf("\t\t%d: %lx: FORK TEST: in child at iteration %u\n", mypid, cr3, i);
       int mypid = current_pid(); //indirect elevate test: current_pid() is a kernel extension symbol that will only work if we are properly elevated in the child after fork
       (void)mypid;
-      stacktouch();
+      stacktouch(stackspace1, sizeof(stackspace1), PGSIZE);
       exit(0);
     } else if (cpid<0) {
       printf("\t\t%d: %lx: FORK TEST: fork failed at iteration %u\n", mypid, cr3, i);

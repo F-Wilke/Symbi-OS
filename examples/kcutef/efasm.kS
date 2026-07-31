@@ -3,7 +3,8 @@
 #include <asm/asm.h>
 #include <asm/nospec-branch.h>
 #include <asm/thread_info.h>
-
+	#include <asm/processor-flags.h>
+	
 	#define TSS_IST7    84
 	// HW ERROR CODE is last item pushed on to stack by exception logic
 	// bits are defined as follows for pagefault exception-- from intel manual

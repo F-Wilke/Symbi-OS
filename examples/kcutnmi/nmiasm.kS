@@ -3,7 +3,7 @@
 #include <asm/asm.h>
 #include <asm/nospec-branch.h>
 #include <asm/thread_info.h>
-
+#include <asm/ibt.h>
 
 #define TSS_IST7    84
 
@@ -14,6 +14,7 @@
 	.align 16
 	.global nmi_asm_check_ist7
 nmi_asm_check_ist7:
+    ENDBR
     push %rdi
  	rdgsbase %rdi
     testq %rdi, %rdi
@@ -79,6 +80,7 @@ nmi_asm_check_ist7_user_exit_now:
 	.align 16
 	.global nmi_asm_debug
 nmi_asm_debug:
+    ENDBR
     push %rbx
     sub $0x28, %rsp
     mov $0, %rax
