@@ -1,12 +1,12 @@
 #set -x
 typeset -i BGWRK=${BGWRK:-0}
 
+# backgound cpu centric works -- infinte loop of computing sin
+# no io to avoid blocking 
 (( BGWRK > 0)) && {
     bgpids=()
     for ((j=1; j<=BGWRK; j++)); do
-	{
-	    ((i=0)); while true; do ((i++)); sleep 1; cat /etc/passwd > /tmp/bgwrk.$i.out; done;
-	} &
+	bc -l <<< "while (1) { x=s(1.5) }" & 
 	bgpids+=($!)
     done
 }
