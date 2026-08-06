@@ -74,3 +74,24 @@ int kernel_user_counter_inc(int amount) {
 	return before;
 }
 EXPORT_SYMBOL(kernel_user_counter_inc);
+
+/*
+ * kernel_get_nvcsw / kernel_get_nivcsw
+ *
+ * Return the voluntary and involuntary context switch counts for the
+ * current task directly from task_struct.  Used by the scheduling tests
+ * in kcuttest to verify that context switches occurred (or did not) during
+ * a test interval.  Must be called while elevated so that current is valid
+ * and accessible.
+ */
+unsigned long kernel_get_nvcsw(void)
+{
+	return current->nvcsw;
+}
+EXPORT_SYMBOL(kernel_get_nvcsw);
+
+unsigned long kernel_get_nivcsw(void)
+{
+	return current->nivcsw;
+}
+EXPORT_SYMBOL(kernel_get_nivcsw);

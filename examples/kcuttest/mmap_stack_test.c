@@ -38,14 +38,14 @@ static void segv_handler(int sig, siginfo_t *si, void *unused)
 int mmap_stack_test(unsigned operation)
 {
     pid_t mypid = getpid();
-    int fd = -1;
+    volatile int fd = -1;
     void *mapped_area = NULL;
     size_t map_size = 2 * 1024 * 1024; // 2 MB to ensure we have unmapped pages
     unsigned char *vec = NULL;
     size_t num_pages;
     int page_A_idx = -1, page_B_idx = -1, page_C_idx = -1;
     void *page_A, *page_B, *page_C;
-    int ret = 0;
+    volatile int ret = 0;
     struct sigaction sa;
     
     printf("%d: MMAP STACK TEST: BEGIN", mypid);
@@ -150,7 +150,7 @@ int mmap_stack_test(unsigned operation)
     // RFLAGS
     // [RSP]
     // [SS]
-    void *new_stack_ptr;
+    void * volatile new_stack_ptr;
     if (operation == 2) {
         printf("\t%d: Operation 2 selected - will cause general protection fault by writing to reserved CR4 bit, set up stack to allow the exception frame\n", mypid);
         new_stack_ptr = (char *)page_B + 0x40; //8 qwords for the exception frame and a call
@@ -171,8 +171,10 @@ int mmap_stack_test(unsigned operation)
         // Save current stack pointer and manipulate it
         // This is extremely dangerous - we're putting the stack in page B (unmapped)
         // Any function call or stack operation will fault
-        register void *old_rsp __asm__("rsp");
-        register void *saved_rsp = old_rsp;
+        // Suppress: register asm variable cannot be volatile; clobber by
+        // longjmp is harmless here since we only read RSP once into saved_rsp. 
+        register void * saved_rsp;
+	__asm__ volatile ("mov %%rsp, %0" : "=r"(saved_rsp));
         
         // Set stack pointer to the calculated location
         __asm__ volatile (
