@@ -276,6 +276,7 @@ static void ef_adaptor_cleanup_tss(void* arg) {
   
   tss = this_cpu_ptr(&cpu_tss_rw);
   if (tss->x86_tss.ist[IST_INDEX_EF] != 0) {
+    unsigned long top = tss->x86_tss.ist[IST_INDEX_EF];
     tss->x86_tss.ist[IST_INDEX_EF] = 0;
 #ifdef EF_STACK_DEBUG    
     WRITE_ONCE(ef_stacks[cpu], 0);
@@ -283,7 +284,7 @@ static void ef_adaptor_cleanup_tss(void* arg) {
     pr_info("%s: CPU %d: EF_STACK_DEBUG: unregistered for %d\n",
 	    __func__, cpu, cpu);
 #endif	    
-    free_pages(tss->x86_tss.ist[IST_INDEX_EF] - PAGE_SIZE, 0);
+    free_pages(top - PAGE_SIZE, 0);
     VINFO("%s: CPU %d: cleaned up IST7 (ist index %d) stack\n", __func__, cpu,
       IST_INDEX_EF);
     
