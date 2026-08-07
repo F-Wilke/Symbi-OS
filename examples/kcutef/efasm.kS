@@ -32,7 +32,7 @@
 	.equ RFLAGS_SWAPPED_GS, 1<<29
 	.equ RFLAGS_SWAPPED_GS_MASK, ~(1<<29)
 
-        .equ USER_CS, 0x33
+	.equ USER_CS, 0x33
 	.equ USER_SS, 0x2b
 
 #if 0	
@@ -254,7 +254,7 @@ ef_adaptor_asm_fix_ist_no_err_code:
 
 	pushq %rdi
 
-	movq %rsp, %rdi
+	movq %rsp, %rdi //This is an assert to check whether we are at the expected position on the IST stack.
 	andq $0xfff, %rdi //mask to get the offset within the page of the faulting stack pointer. If this is small, then we likely faulted on a user stack. If it's large, then we likely faulted on a kernel stack. This is not a perfect check but should work in practice since user stacks are usually near the bottom of the user address space and kernel stacks are near the top of the kernel address space.
 	cmpq $0xfc8, %rdi //compare against a threshold near the top of the page
 	jne .Lno_err_c_len_bad
@@ -273,13 +273,30 @@ ef_adaptor_asm_fix_ist_no_err_code:
 	
 .Lno_err_c_no_swapgs:
 	testq %rdi, %rdi
-	js .Lno_err_c_skip_set_dest
+	js .Lno_err_c_skip_set_dest // if we were on a kernel stack, we stick with full kernel semantics, no forgery with CS and SS
 
+	//if we have a user rip, we need rsp0, if we have a kernel rip, we need currenttopofstack
+	movq 0x20(%rsp), %rcx //faulting RIP from exception frame
+	testq %rcx, %rcx
+	js .Lno_err_c_set_ktos
+	
 	lea cpu_tss_rw(%rip), %rdi
 	movq %gs:TSS_sp0(%rdi), %rdi
+	//pretend we're from user
+	movq $(USER_CS), 0x28(%rsp)
+	movq $(USER_SS), 0x40(%rsp)
+	jmp .Lno_err_c_copy_frame_to_dest
+
+
+.Lno_err_c_set_ktos:
+	movq %gs:cpu_current_top_of_stack(%rip), %rdi
 
 .Lno_err_c_skip_set_dest:
 .Lno_err_c_copy_frame_to_dest:
+
+
+
+
 	subq $0x48, %rdi //point to start of exception frame on IST stack
 
 	movq %rsp, %rsi //source is current stack pointer
@@ -308,7 +325,7 @@ ef_adaptor_asm_fix_ist_no_err_code:
 	cmpq $0, (%rsp)
 	je .Lerr_c_ret_state_bad
 
-	testl $CS_MASK, 0x10(%rsp)
+	testl $CS_MASK, 0x10(%rsp) //This is an assert to check whether we have an abnormal value for CS in the exception frame. 
 	jnz .Lerr_c_ret_state_bad
 
 	// testl $FLAGS_MASK, 0x18(%rsp)
