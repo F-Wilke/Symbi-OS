@@ -122,34 +122,6 @@ ef_adaptor_asm_fix_ist_err_code:
 	testb $1, TASK_symbiote_elevated(%rsi)
 
 	jz  .Lerr_c_skip_forgery
-
-#if 0	
-	//check cr4 whether smep/smap has been enabled
-	movq %cr4, %rcx
-	testl $SMEP_SMAP_MASK, %ecx
-	jz .Lerr_c_skip_cr4_set
-	//if smep/smap is enabled, we need to disable it
-	andq $~SMEP_SMAP_MASK, %rcx       // must use andq to avoid zero extending! use andq to perserve upper 32 bits or cr4
-	movq %rcx, %cr4
-
-	// now test if this fault was due to a protection violation
-	btq  $(ERRCODE_PF_PROT_BIT) , 0x20(%rsp)
-	jnc  .Lerr_c_skip_cr4_set
-
-	// return back to the faulting operation
-	// cleanup the stack and iret
-	//  two words need to be clear from the stack
-	//     1. the handler pushed on by the ef entry code
-	//     2. the error code pushed by the hardware
-	popq %rcx
-	popq %rsi
-	popq %rdi
-	addq $(8*2), %rsp                 //remove return address from stack and error code
-	
-	// now we can iret now return using what is left of
-	// the exception fram RIP, CS, RFLAGS, RSP, SS
-	iretq
-#endif
 	
 .Lerr_c_skip_cr4_set:
 	// if elevated task has enable_ac=1 but a kernel CLAC cleared it before
@@ -270,7 +242,8 @@ ef_adaptor_asm_fix_ist_no_err_code:
 	
 	swapgs //swapgs was not a kernel address, so we need to swap it
 	orl $RFLAGS_SWAPPED_GS, 0x30(%rsp) //if negative, then we already have the right destination 
-	
+
+
 .Lno_err_c_no_swapgs:
 	testq %rdi, %rdi
 	js .Lno_err_c_skip_set_dest // if we were on a kernel stack, we stick with full kernel semantics, no forgery with CS and SS
@@ -291,6 +264,15 @@ ef_adaptor_asm_fix_ist_no_err_code:
 .Lno_err_c_set_ktos:
 	movq %gs:cpu_current_top_of_stack(%rip), %rdi
 
+	// FIXME: JA this is experimental
+	// Forgey:  Here we go again lying through our teeth ;-)
+	//          We assume that a user stack prior to the fault
+	//          indicates that we require a "priviledge switch" to the
+	//          kernel execution environment so we do on behalf of the hardware
+	movq   $(USER_CS) , 0x28(%rsp)          // make CS look like user cs
+	movq   $(USER_SS) , 0x40(%rsp)          // make SS look like user ss
+
+	
 .Lno_err_c_skip_set_dest:
 .Lno_err_c_copy_frame_to_dest:
 
