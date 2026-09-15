@@ -12,6 +12,7 @@ KFLAGS := -K ../kcutidt -K ../kcutnmi -K ../kcutef -K ../kcutevac  -K ../kcuttcp
 KCUT_CFLAGS = $(CFLAGS) -D KCUT_TCP -I ../kcuttcp -I ../kcuttest -I ../kcutevac  -I ../../Symlib/include -DDYNLINK
 KCUT_LDFLAGS = -lc   ../../Symlib/build/L1/L1.a -L ../kcuttcp -L ../kcutevac -L. -lkcuttcp -l kcutevac -lkern 
 TARGETS :=  esrv eclnt kcut_bpbs_esrv kcut_cpbs_esrv kcut_bpcs_esrv kcut_cpcs_esrv
+KLD_TARGETS=libkern.so kotbl.bin
 
 .PHONY: all clean 
 
@@ -22,8 +23,11 @@ esrv.o: esrv.c
 esrv: esrv.o
 	$(CC) $(CFLAGS) -o $@ $< 
 
-libkern.so kotbl.bin: 
-	${KLD} ${KFLAGS}
+cachedkallsyms:
+	cp /proc/kallsyms $@
+
+$(KLD_TARGETS): cachedkallsyms
+	${KLD} -S $< ${KFLAGS}
 
 kcut_bpbs_esrv.o: esrv.c libkern.so kotbl.bin 
 	$(CC) $(KCUT_CFLAGS) -D BRACKET_PRIV -D BRACKET_STACK  -c -o $@ $<
