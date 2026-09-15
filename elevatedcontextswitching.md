@@ -3,13 +3,15 @@
 Elevated tasks that stay executing on a user stack (Constant Privilege and Constant 
 user Stack (CPCS)) breaks invariants in the context switch logic.
 
+To clarify understanding we will call the currently running task `prev` and the one to be switched to `next`.
+
 The invariant:
 
 ```
-The scheduling path assumes 1) RSP is a value on a unique kernel stack that is mapped into all address spaces and 2) that where to resume execution is maintained in an IRETQ frame at the top of this stack.  1 is critical since even when the page table is switched the code continues to use the unique kernel stack to seamlessly continue execution of the scheduling logic. 2 is critical since the resumption code (`__switch_to_asm`) expects to execute an IRETQ to resume the task.
+The scheduling path assumes 1) RSP is a value on prev's unique kernel stack (sp0), and as such is mapped into all address spaces and 2) that prev's kernel stack contains the state to resume  the task and is responsible for executing the majority of kernel context switch logic. 1 is critical since the page table is switched from prev's to next's , realtively early in the context switch path, the code can and does continue to use prev's kernel stack to seamlessly continue execution of the scheduling logic. 2 is critical as the resume logic assume when resuming prev (now next) has the both the kernel state to resume the task as well as the user state to return to (if this is a user task -- that is to say when desceduled a task's kernel stack has the rsp and register state  required to resume the kernel scheduling call chain (via a ret) as it was when it was desceduled and if this is user task then at the top of the tasks with be an IRETQ hardware frame that the scheduling logic can unwind to and then ireq to change privilige and switch to the task's user stack.
 ```
 
-There are two fundamental cases:
+There are two fundamental scheduling cases:
 1. Voluntary (`schedule()`, `cond_resched()` called for any reason eg. elevate
    task call path results in voluntary blocking/yeilding).
 2. Preemption (eg. timer interrupt fires and leads to `schedule()`, `cond_resched()`.
@@ -30,14 +32,14 @@ __schedule()
 2. `switch_mm_irqs_off` job is to change the hardware page table base pointer 
     register (PTBR) `cr3`.  after updating the `cr3` this code path goes
 	on to continue to use the stack it is running on eg. calls other functions.
-	When executing on a user stack this is a problem as we have now switch
+	When executing CPCS on a user stack this is a problem as we have now switch
 	to a diffent page table and can be attempting to write to an arbitrary 
 	location in that address space.
 3.  another systemic problem in the voluntary case, is that `__switch_to_asm` in `entry_64.S` will
     save the current rsp (which assumably is expected to be a kernel 
 	stack address of the kernel stack associated with the currently running
-	task an whose current state hold the frames leading to the context switch) to
-	the current tasks saved context.
+	task an whose current state hold the frames leading to the context switch) and will be used
+	to resume that call when reschedule.
 	
 	
 
