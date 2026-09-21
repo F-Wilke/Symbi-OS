@@ -52,7 +52,7 @@ kcut_cpcs_esrv: kcut_cpcs_esrv.o
 	$(CC) $(KCUT_CFLAGS) -o $@ $< $(KCUT_LDFLAGS)
 	${KLD} -o $@
 
-eclnt.o: esrv.c
+eclnt.o: eclnt.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 eclnt: eclnt.o
 	$(CC) $(CFLAGS) -o $@ $< -lm 
