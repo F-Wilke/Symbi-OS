@@ -269,8 +269,11 @@ ef_adaptor_asm_fix_ist_no_err_code:
 	//          We assume that a user stack prior to the fault
 	//          indicates that we require a "priviledge switch" to the
 	//          kernel execution environment so we do on behalf of the hardware
-	movq   $(USER_CS) , 0x28(%rsp)          // make CS look like user cs
-	movq   $(USER_SS) , 0x40(%rsp)          // make SS look like user ss
+	// TODO: AA commenting this out for the time being as it causes
+	//          Scheduling while atomic bug. Still need to understand this
+	//          behavior better and define elevated exception semantics
+	//movq   $(USER_CS) , 0x28(%rsp)          // make CS look like user cs
+	//movq   $(USER_SS) , 0x40(%rsp)          // make SS look like user ss
 
 	
 .Lno_err_c_skip_set_dest:
