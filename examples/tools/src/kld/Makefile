@@ -22,7 +22,7 @@ all: ${EXTFILES} ${TARGETS}
 kldd: kld
 	ln -s kld kldd
 
-kld: kld.so ${KLD_OBJS}
+kld: kld.so ${EXTFILES} ${KLD_OBJS}
 	${CC} ${CFLAGS} -o $@ ${KLD_OBJS} ${LDFLAGS} 
 
 kld.so: kldso_entry.o kldso.o
