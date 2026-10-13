@@ -11,6 +11,7 @@ KCUT_LDFLAGS := -lc  $(realpath ../../Symlib/build/L1/L1.a)  -L $(realpath ../kc
 
 .PHONY: clean distclean
 TARGETS=valkey/src/valkey-server-cpcs valkey/src/valkey-server-bpcs valkey/src/valkey-server-cpbs valkey/src/valkey-server-bpbs
+TARGETS+=valkey/src/valkey-server-cpcs-ds valkey/src/valkey-server-bpcs-ds valkey/src/valkey-server-cpbs-ds valkey/src/valkey-server-bpbs-ds
 TARGETS+=valkey/src/valkey-server-cpcs-evac valkey/src/valkey-server-bpcs-evac valkey/src/valkey-server-cpbs-evac valkey/src/valkey-server-bpbs-evac
 TARGETS+=valkey/src/valkey-server-cpcs-evac-ds valkey/src/valkey-server-bpcs-evac-ds valkey/src/valkey-server-cpbs-evac-ds valkey/src/valkey-server-bpbs-evac-ds
 TARGETS+=valkey/src/valkey-server-cpcs-evac-ds-clean
@@ -67,6 +68,26 @@ valkey/src/valkey-server-bpbs-evac: valkey/Makefile valkey/Makefile libkern.so k
 	mv valkey/src/valkey-server $@
 
 # WITH DEEP SHORTCUTTING
+valkey/src/valkey-server-cpcs-ds: valkey/Makefile libkern.so kotbl.bin
+	make -C valkey clean
+	make -j -C valkey KCUT_CFLAGS="${KCUT_CFLAGS} -DSHORTCUT=1" KCUT_LDFLAGS="${KCUT_LDFLAGS}" KLD="${KLD}" KLDFLAGS="${KLDFLAGS}" V=1
+	mv valkey/src/valkey-server $@
+
+valkey/src/valkey-server-bpcs-ds: valkey/Makefile valkey/Makefile libkern.so kotbl.bin
+	make -C valkey clean
+	make -j -C valkey KCUT_CFLAGS="${KCUT_CFLAGS} -DSHORTCUT=1 -D BRACKET_PRIV" KCUT_LDFLAGS="${KCUT_LDFLAGS}" KLD="${KLD}" KLDFLAGS="${KLDFLAGS}" V=1
+	mv valkey/src/valkey-server $@
+
+valkey/src/valkey-server-cpbs-ds: valkey/Makefile valkey/Makefile libkern.so kotbl.bin
+	make -C valkey clean
+	make -j -C valkey KCUT_CFLAGS="${KCUT_CFLAGS} -DSHORTCUT=1 -D BRACKET_STACK" KCUT_LDFLAGS="${KCUT_LDFLAGS}" KLD="${KLD}" KLDFLAGS="${KLDFLAGS}" V=1
+	mv valkey/src/valkey-server $@
+
+valkey/src/valkey-server-bpbs-ds: valkey/Makefile valkey/Makefile libkern.so kotbl.bin
+	make -C valkey clean
+	make -j -C valkey KCUT_CFLAGS="${KCUT_CFLAGS} -DSHORTCUT=1 -D BRACKET_PRIV -D BRACKET_STACK" KCUT_LDFLAGS="${KCUT_LDFLAGS}" KLD="${KLD}" KLDFLAGS="${KLDFLAGS}" V=1
+	mv valkey/src/valkey-server $@
+
 valkey/src/valkey-server-cpcs-evac-ds: valkey/Makefile libkern.so kotbl.bin
 	make -C valkey clean
 	make -j -C valkey KCUT_CFLAGS="${KCUT_CFLAGS} -DSHORTCUT=1 -D EVACUATE" KCUT_LDFLAGS="${KCUT_LDFLAGS}" KLD="${KLD}" KLDFLAGS="${KLDFLAGS}" V=1
