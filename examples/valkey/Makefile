@@ -115,7 +115,7 @@ valkey/src/valkey-server-cpcs-evac-ds-clean: valkey/Makefile libkern.so kotbl.bi
 	mv valkey/src/valkey-server $@
 
 valkey/Makefile:
-	git clone git@github.com:valkey-io/valkey.git
+	git clone https://github.com/valkey-io/valkey.git
 	cd valkey && git checkout -b 9.0.3 9.0.3
 	cd valkey && patch -p1 < ../kcut/valkey.patch
 
@@ -131,7 +131,7 @@ distclean: clean
 
 
 valkey-vanilla/Makefile:
-	git clone git@github.com:valkey-io/valkey.git valkey-vanilla
+	git clone https://github.com/valkey-io/valkey.git valkey-vanilla
 	cd valkey-vanilla && git checkout -b 9.0.3 9.0.3
 
 valkey-vanilla/src/valkey-server: valkey-vanilla/Makefile
