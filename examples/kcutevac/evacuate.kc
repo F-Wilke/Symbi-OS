@@ -212,7 +212,7 @@ static int migrateothers(long reserved_cpu, cpumask_var_t othermask)
 
 long acquire_exclusive_cpu(long reserved_cpu, int killifneeded)
 {
-  cpumask_var_t target_mask = NULL, other_mask = NULL;
+  cpumask_var_t target_mask, other_mask;
   struct sched_attr attr = {
       .size = sizeof(struct sched_attr),
       .sched_policy = SCHED_FIFO,
@@ -240,13 +240,13 @@ long acquire_exclusive_cpu(long reserved_cpu, int killifneeded)
     pr_err("EVAC: Invalid CPU %ld (valid range: 0-%d)\n",
            reserved_cpu, nr_cpu_ids - 1);
     rc = -EINVAL;
-    goto done;
+    goto out;
   }
   if (!cpu_online(reserved_cpu))
   {
     pr_err("EVAC: CPU %ld is not online\n", reserved_cpu);
     rc = -EINVAL;
-    goto done;
+    goto out;
   }
 
   // allocate cpumasks on heap to avoid large stack frame
@@ -254,16 +254,15 @@ long acquire_exclusive_cpu(long reserved_cpu, int killifneeded)
   {
     pr_warn("EVAC: Failed to allocate cpumask for target_mask\n");
     rc = -ENOMEM;
-    goto done;
+    goto out;
   }
 
   // do this up front to avoid complications later
   if (!alloc_cpumask_var(&other_mask, GFP_ATOMIC))
   {
     pr_warn("EVAC: Failed to allocate cpumask for other_mask\n");
-    free_cpumask_var(target_mask);
     rc = -ENOMEM;
-    goto done;
+    goto free_target;
   }
 
   // set target_mask to only the reserved cpu
@@ -311,10 +310,12 @@ long acquire_exclusive_cpu(long reserved_cpu, int killifneeded)
   pr_info("EVAC: Task %d acquired exclusive access to CPU %ld\n",
           current->pid, reserved_cpu);
 done:
-  if (target_mask)
-    free_cpumask_var(target_mask);
-  if (other_mask)
-    free_cpumask_var(other_mask);
+  free_cpumask_var(other_mask);
+
+free_target:
+  free_cpumask_var(target_mask);
+
+out:
   if (rc != 0)
   {
     pr_err("EVAC: %d failed to get exclusive access to CPU %ld. Releasing\n",
