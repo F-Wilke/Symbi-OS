@@ -122,7 +122,7 @@ valkey/Makefile:
 kcut/valkey.patch:valkey/src/Makefile valkey/src/socket.c valkey/src/server.c
 	cd valkey && git diff > ../kcut/valkey.patch
 
-clean:
+clean: valkey/Makefile
 	-make -C valkey clean
 	-${RM} -rf $(wildcard $(TARGETS) $(KLD_TARGETS))
 
