@@ -13,19 +13,26 @@ LIBS := -lc  ../../Symlib/build/L1/L1.a -L. -L ../kcutevac -L ../kcuttcp -l kcut
 LDFLAGS := -pie -rdynamic ${LIBS}
 
 .PHONY: all clean
+KLD_TARGETS=libkern.so kotbl.bin
+all: ${KLD_TARGETS}  ${KTARGET} $(TARGET) 
 
-all: ${KTARGET} $(TARGET) 
+cachedkallsyms:
+	cp /proc/kallsyms $@
+
+$(KLD_TARGETS): cachedkallsyms
+	${KLD} -S $< -k /proc/kallsyms
+
 
 # main program
 %.o: %.c 
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-${KTARGET} kotbl.bin app.h applink.o: $(wildcard *.kc *.kh *.kS)
+${KTARGET} app.h applink.o: $(wildcard *.kc *.kh *.kS)
 	 ${KCC} -o ${KTARGET} ${KFLAGS}
 
 ${TARGET}:  main.o mmap_stack_test.o applink.o | kotbl.bin
 	$(CC) $(CFLAGS) -o $@ $^ ${LDFLAGS}
-	${KLD} -o $@
+	${KLD} -S cachedkallsyms -o $@
 
 -include *.d
 
